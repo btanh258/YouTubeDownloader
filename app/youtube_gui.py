@@ -48,7 +48,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.2.4"
+VERSION = "2.2.5"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -163,7 +163,7 @@ def maybe_install_and_relaunch():
         return False
     # Ban cai ma khong chay duoc (loi DLL) thi khong mo no, bao loi de nguoi
     # dung biet ma xu ly chu khong im lang mo ban hong
-    ok, _v = verify_exe(installed, VERSION)
+    ok, _v = verify_exe_retry(installed, VERSION)
     if not ok:
         try:
             import ctypes as _ct2
@@ -415,6 +415,20 @@ def verify_exe(exe_path, expect_version=None):
     return True, ver
 
 
+def verify_exe_retry(exe_path, expect_version=None, tries=3, delay=3):
+    """Kiem tra exe chay duoc, thu lai vai lan cach nhau vai giay. Can thiet
+    vi file exe vua ghi xuong dia co the bi loi DLL 1 lan do Defender dang
+    quet - thu lai sau vai giay thi chay binh thuong."""
+    last = ""
+    for _ in range(max(1, tries)):
+        ok, ver = verify_exe(exe_path, expect_version)
+        if ok:
+            return True, ver
+        last = ver
+        time.sleep(delay)
+    return False, last
+
+
 def file_sha256(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -486,6 +500,10 @@ del "%~f0" >nul 2>&1
 exit /b 1
 :swapped
 del "%NEW%" >nul 2>&1
+rem Doi 5 giay truoc khi mo exe moi: file vua ghi xuong dia, Defender dang
+rem quet no, mo ngay lap tuc de bi loi "Failed to load Python DLL" 1 lan
+rem (mo lai lan sau thi het, vi Defender da quet xong).
+ping -n 6 127.0.0.1 >nul
 start "" "%OLD%"
 del "%~f0" >nul 2>&1
 exit /b 0
@@ -1483,7 +1501,7 @@ class YouTubeDownloaderApp:
         # Kiem tra lan cuoi: exe moi tai ve co chay duoc tren may nay khong.
         # Neu khong (vd loi DLL do Defender chan / thieu thu vien) thi huy
         # cap nhat, giu nguyen exe cu dang chay tot.
-        ok, got_ver = verify_exe(got, release.get("tag", ""))
+        ok, got_ver = verify_exe_retry(got, release.get("tag", ""))
         if not ok:
             try:
                 os.remove(got)

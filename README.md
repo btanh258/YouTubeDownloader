@@ -101,6 +101,16 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.2.5 (so với 2.2.4)
+
+- **Sửa lỗi DLL chỉ xảy ra 1 lần ngay sau khi cập nhật:** nguyên nhân là
+  file exe mới vừa ghi xuống đĩa, Defender vẫn đang quét nó, mà script
+  cập nhật mở exe mới lên ngay lập tức nên bootloader không tải được
+  `python311.dll` lần đầu (mở lại lần sau thì hết, vì Defender đã quét
+  xong). Nay script cập nhật đợi 5 giây sau khi thay file mới mở app,
+  và bước kiểm tra `exe --version` trước khi thay cũng thử lại 3 lần
+  cách nhau 3 giây thay vì thử 1 lần rồi hủy cập nhật.
+
 ## Thay đổi trong 2.2.4 (so với 2.2.3)
 
 - **Gỡ cài đặt khi chạy portable:** trước đây nút Gỡ cài đặt luôn nhắm vào
