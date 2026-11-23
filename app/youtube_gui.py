@@ -1,0 +1,746 @@
+import sys
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import tkinter.font as tkfont
+import yt_dlp
+import threading
+import os
+import json
+import ctypes
+import urllib.parse
+import urllib.request
+import urllib.error
+import zipfile
+import tempfile
+import shutil
+import subprocess
+import time
+
+
+def parse_launch_url(arg):
+    """Nhan link khoi dong: link YouTube thuong hoac link qua Custom Protocol ytdl://.
+
+    Chrome goi: ytdl://https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D... (da encode)
+    hoac:     ytdl://https://www.youtube.com/watch?v=... (chua encode)
+    Ca hai deu tra ve link YouTube sach de dua vao yt-dlp.
+    """
+    if not arg:
+        return ""
+    url = arg.strip().strip('"').strip()
+    low = url.lower()
+    if low.startswith("ytdl://"):
+        url = url[7:]
+    elif low.startswith("ytdl:"):
+        url = url[5:]
+    if url.startswith("//"):
+        url = url[2:]
+    url = urllib.parse.unquote(url)
+    if "%3A" in url.upper() or "%2F" in url.upper():
+        url = urllib.parse.unquote(url)
+    return url.strip()
+
+# ==========================================
+# FFMPEG: TU TAI / TU CAP NHAT (Gyan.dev Essentials, ~119 MB, 1 lan duy nhat)
+# ==========================================
+# Nguon chinh thuc, duoc yt-dlp gioi thieu: https://www.gyan.dev/ffmpeg/builds/
+# Zip Essentials gom ffmpeg.exe + ffprobe.exe (+ ffplay.exe, khong can lay).
+# URL nay luon tro toi ban moi nhat (hien tai 9.1), urllib se tu theo redirect.
+FFMPEG_ZIP_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+FFMPEG_MIN_SIZE = 1_000_000  # file that nho hon 1 MB coi nhu hong / tai do
+
+
+def ffmpeg_paths(base_dir):
+    return (os.path.join(base_dir, "ffmpeg.exe"),
+            os.path.join(base_dir, "ffprobe.exe"))
+
+
+def ffmpeg_version(exe_path):
+    """Tra ve chuoi version, vd '9.1', hoac '' neu khong chay duoc."""
+    try:
+        out = subprocess.run([exe_path, "-version"], capture_output=True,
+                             text=True, timeout=10,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        first = (out.stdout or "").splitlines()
+        if out.returncode == 0 and first:
+            parts = first[0].split()
+            # Dong dau: 'ffmpeg version 9.1-essentials_build ...'
+            if len(parts) >= 3 and parts[0] == "ffmpeg":
+                return parts[2].split("-")[0]
+            return first[0][:40]
+    except Exception:
+        pass
+    return ""
+
+
+def ffmpeg_is_usable(exe_path):
+    try:
+        if not os.path.isfile(exe_path) or os.path.getsize(exe_path) < FFMPEG_MIN_SIZE:
+            return False
+    except Exception:
+        return False
+    return bool(ffmpeg_version(exe_path))
+
+
+def ffmpeg_missing(base_dir):
+    """Tra ve danh sach file thieu/hong trong ['ffmpeg.exe', 'ffprobe.exe']."""
+    ff, fp = ffmpeg_paths(base_dir)
+    missing = []
+    if not ffmpeg_is_usable(ff):
+        missing.append("ffmpeg.exe")
+    if not ffmpeg_is_usable(fp):
+        missing.append("ffprobe.exe")
+    return missing
+
+
+def download_ffmpeg(base_dir, progress_cb=None):
+    """Tai zip Gyan, chi giai nen bin/ffmpeg.exe + bin/ffprobe.exe vao base_dir.
+
+    progress_cb(downloaded_bytes, total_bytes_or_0, stage_text)
+    Tra ve version ffmpeg, raise Exception neu that bai. File zip tam luon
+    duoc xoa, file cu chi bi thay khi file moi da chay duoc.
+    """
+    if progress_cb:
+        progress_cb(0, 0, "Dang ket noi may chu FFmpeg...")
+    req = urllib.request.Request(FFMPEG_ZIP_URL, headers={"User-Agent": "YouTubeDownloader/2.1"})
+    tmp_zip = os.path.join(base_dir, ".ffmpeg-download.zip")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_zip, "wb") as f:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                chunk = resp.read(1024 * 256)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if progress_cb:
+                    progress_cb(done, total, "Dang tai FFmpeg...")
+        if progress_cb:
+            progress_cb(done, total, "Dang giai nen FFmpeg...")
+        with zipfile.ZipFile(tmp_zip) as zf:
+            names = {}
+            for info in zf.infolist():
+                base = os.path.basename(info.filename)
+                if base in ("ffmpeg.exe", "ffprobe.exe") and "/bin/" in info.filename.replace("\\", "/"):
+                    names[base] = info.filename
+            if "ffmpeg.exe" not in names or "ffprobe.exe" not in names:
+                raise RuntimeError("File zip FFmpeg khong chua du ffmpeg.exe/ffprobe.exe")
+            tmp_dir = tempfile.mkdtemp(prefix="ffmpeg-", dir=base_dir)
+            try:
+                zf.extract(names["ffmpeg.exe"], tmp_dir)
+                zf.extract(names["ffprobe.exe"], tmp_dir)
+                for base in ("ffmpeg.exe", "ffprobe.exe"):
+                    src = os.path.join(tmp_dir, names[base])
+                    dst = os.path.join(base_dir, base)
+                    try:
+                        os.chmod(src, 0o755)
+                    except Exception:
+                        pass
+                    if not ffmpeg_is_usable(src):
+                        raise RuntimeError(f"File {base} vua tai ve khong chay duoc")
+                    os.replace(src, dst)
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+    finally:
+        try:
+            if os.path.exists(tmp_zip):
+                os.remove(tmp_zip)
+        except Exception:
+            pass
+    ff, _ = ffmpeg_paths(base_dir)
+    ver = ffmpeg_version(ff)
+    if not ver:
+        raise RuntimeError("Da giai nen xong nhung ffmpeg.exe khong chay duoc")
+    return ver
+
+
+# ==========================================
+# LỚP NÚT BẤM BO TRÒN TÙY CHỈNH (CANVAS WINDOWS 11 STYLE)
+# ==========================================
+# ==========================================
+class ModernButton(tk.Canvas):
+    def __init__(self, master, text, bg, hover_bg, fg="white", disabled_bg="#E0E0E0", command=None, radius=8, width=None, **kwargs):
+        # Lấy màu nền của master để nút hòa quyện vào giao diện
+        try:
+            master_bg = master.cget("bg")
+            if not master_bg or master_bg == "SystemButtonFace":
+                master_bg = "#F3F3F3"
+        except:
+            master_bg = "#F3F3F3"
+            
+        super().__init__(master, highlightthickness=0, bg=master_bg, **kwargs)
+        self.text = text
+        self.bg_color = bg
+        self.hover_bg = hover_bg
+        self.fg_color = fg
+        self.disabled_bg = disabled_bg
+        self.command = command
+        self.radius = radius
+        self.state = tk.NORMAL
+        self._is_hovered = False
+
+        # Căn chỉnh kích thước linh hoạt dựa trên text
+        self.font = tkfont.Font(family="Segoe UI", size=10, weight="bold")
+        if width:
+            char_w = self.font.measure("0")
+            self.req_w = width * char_w + 20
+        else:
+            self.req_w = self.font.measure(self.text) + 30
+            
+        self.req_h = self.font.metrics("linespace") + 16
+        self.config(width=self.req_w, height=self.req_h)
+
+        self.bind("<Configure>", self.draw)
+        self.bind("<Enter>", self.on_enter)
+        self.bind("<Leave>", self.on_leave)
+        self.bind("<Button-1>", self.on_click)
+        self.bind("<ButtonRelease-1>", self.on_release)
+        
+    def draw(self, event=None):
+        self.delete("all")
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w <= 1 or h <= 1:
+            w = self.req_w
+            h = self.req_h
+        
+        # Đảm bảo bán kính không bị biến dạng
+        r = min(self.radius, w/2, h/2)
+        
+        bg = self.disabled_bg if self.state == tk.DISABLED else (self.hover_bg if self._is_hovered else self.bg_color)
+        fg = "#999999" if self.state == tk.DISABLED else self.fg_color
+
+        # Vẽ hình chữ nhật bo tròn mềm mại bằng các cung và hcn
+        self.create_arc(0, 0, 2*r, 2*r, start=90, extent=90, fill=bg, outline="")
+        self.create_arc(w-2*r, 0, w, 2*r, start=0, extent=90, fill=bg, outline="")
+        self.create_arc(0, h-2*r, 2*r, h, start=180, extent=90, fill=bg, outline="")
+        self.create_arc(w-2*r, h-2*r, w, h, start=270, extent=90, fill=bg, outline="")
+        self.create_rectangle(r, 0, w-r, h, fill=bg, outline="")
+        self.create_rectangle(0, r, w, h-r, fill=bg, outline="")
+        
+        self.create_text(w/2, h/2, text=self.text, fill=fg, font=self.font)
+
+    def on_enter(self, e):
+        if self.state == tk.NORMAL:
+            self._is_hovered = True
+            self.config(cursor="hand2")
+            self.draw()
+            
+    def on_leave(self, e):
+        if self.state == tk.NORMAL:
+            self._is_hovered = False
+            self.config(cursor="")
+            self.draw()
+            
+    def on_click(self, e):
+        pass # Có thể mở rộng hiệu ứng nhấn tại đây
+        
+    def on_release(self, e):
+        if self.state == tk.NORMAL and self.command:
+            # Xác nhận click diễn ra trong biên giới của nút
+            if 0 <= e.x <= self.winfo_width() and 0 <= e.y <= self.winfo_height():
+                self.command()
+
+    def set_state(self, state):
+        self.state = state
+        self.draw()
+
+
+# ==========================================
+# GIAO DIỆN CHÍNH CỦA PHẦN MỀM
+# ==========================================
+class YouTubeDownloaderApp:
+    def __init__(self, root, initial_url=""):
+        self.root = root
+        self.root.title("YouTube Downloader 2.1")
+        self.app_dir = os.path.dirname(os.path.abspath(__file__))
+        self.ffmpeg_busy = False
+        
+        # --- THÊM ICON TẠI ĐÂY ---
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon_Youtube.ico")
+            self.root.iconbitmap(icon_path)
+        except Exception:
+            pass # Bỏ qua nếu không tìm thấy file icon để tránh crash app
+        # -------------------------
+        
+        # --- Kích thước và Căn giữa màn hình ---
+        window_width = 560
+        window_height = 570 # Tăng chiều cao lên 570 để chứa Checkbox
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        x_cordinate = int((screen_width / 2) - (window_width / 2))
+        y_cordinate = int((screen_height / 2) - (window_height / 2))
+        self.root.geometry(f"{window_width}x{window_height}+{x_cordinate}+{y_cordinate}")
+        self.root.resizable(False, False)
+        
+        # Màu nền chuẩn Windows 11 (Light mode)
+        self.bg_color = "#F3F3F3"
+        self.root.configure(bg=self.bg_color)
+        
+        # Style cho các thành phần nhập liệu
+        style = ttk.Style()
+        style.theme_use('vista') # Giao diện native của hệ điều hành
+        
+        # Đọc cấu hình
+        self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        default_dir = os.path.join(os.path.expanduser("~"), "Downloads", "Video")
+        self.recent_dirs = [default_dir]
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if "recent_dirs" in data and isinstance(data["recent_dirs"], list) and data["recent_dirs"]:
+                        self.recent_dirs = data["recent_dirs"]
+            except: pass
+
+        self.save_dir = tk.StringVar(value=self.recent_dirs[0])
+        self.downloaded_file = None
+
+        # --- XÂY DỰNG GIAO DIỆN ---
+        
+        # Header Frame: Chứa Tiêu đề và Nút Cập nhật Lõi thu gọn (Icon)
+        header_frame = tk.Frame(root, bg=self.bg_color)
+        header_frame.pack(pady=(25, 20))
+        
+        tk.Label(header_frame, text="YOUTUBE DOWNLOADER", font=("Segoe UI", 17, "bold"), bg=self.bg_color, fg="#1A1A1A").pack(side=tk.LEFT)
+        self.update_btn = ModernButton(header_frame, text="🔄", bg="#D83B01", hover_bg="#B23101", command=self.update_core_thread, width=3)
+        self.update_btn.pack(side=tk.LEFT, padx=(10, 0), ipady=2)
+        # Nut cap nhat FFmpeg: tai lai ban moi nhat tu Gyan.dev (khi nao can thi bam)
+        self.ffmpeg_btn = ModernButton(header_frame, text="🎬", bg="#6C757D", hover_bg="#5A6268", command=self.ffmpeg_update_thread, width=3)
+        self.ffmpeg_btn.pack(side=tk.LEFT, padx=(6, 0), ipady=2)
+
+        # Khung Link
+        tk.Label(root, text="Đường dẫn Video / Playlist:", font=("Segoe UI", 9, "bold"), bg=self.bg_color, fg="#1A1A1A").pack(anchor="w", padx=35)
+        self.url_entry = ttk.Entry(root, font=("Segoe UI", 10))
+        self.url_entry.pack(fill=tk.X, padx=35, pady=(2, 2), ipady=4)
+        if initial_url:
+            self.url_entry.insert(0, initial_url)
+            
+        # Thêm Checkbox tải Playlist
+        self.is_playlist_var = tk.BooleanVar(value=False)
+        chk_playlist = tk.Checkbutton(root, text="Tải toàn bộ Danh sách phát (Playlist)", variable=self.is_playlist_var, bg=self.bg_color, font=("Segoe UI", 9), activebackground=self.bg_color, cursor="hand2")
+        chk_playlist.pack(anchor="w", padx=31, pady=(0, 10))
+
+        # Khung Thư mục
+        tk.Label(root, text="Lưu tại:", font=("Segoe UI", 9, "bold"), bg=self.bg_color, fg="#1A1A1A").pack(anchor="w", padx=35)
+        frame_dir = tk.Frame(root, bg=self.bg_color)
+        frame_dir.pack(fill=tk.X, padx=35, pady=(2, 12))
+        self.dir_combo = ttk.Combobox(frame_dir, textvariable=self.save_dir, values=self.recent_dirs, state="readonly", font=("Segoe UI", 10))
+        self.dir_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self.dir_combo.bind("<<ComboboxSelected>>", self.on_combo_select)
+        
+        self.browse_btn = ModernButton(frame_dir, text=" 📂 Duyệt ", bg="#6C757D", hover_bg="#5A6268", command=self.browse_folder)
+        self.browse_btn.pack(side=tk.RIGHT, padx=(10, 0), ipady=1)
+
+        # Cụm Nút chức năng phụ (Giờ chỉ còn nút Lấy thông tin)
+        btn_frame = tk.Frame(root, bg=self.bg_color)
+        btn_frame.pack(pady=5)
+        self.check_btn = ModernButton(btn_frame, text="🔍 Lấy thông tin", bg="#107C10", hover_bg="#0B5A0B", command=self.fetch_info_thread, width=20)
+        self.check_btn.pack(side=tk.LEFT, padx=10, ipady=2)
+
+        # Hiển thị Tiêu đề Video
+        self.title_label = tk.Label(root, text="Vui lòng nhập link và bấm Lấy thông tin...", font=("Segoe UI", 10, "italic"), bg=self.bg_color, fg="#005FB8", wraplength=450)
+        self.title_label.pack(pady=(15, 5))
+
+        # Chọn Chất lượng
+        tk.Label(root, text="Chất lượng / Định dạng:", font=("Segoe UI", 9, "bold"), bg=self.bg_color, fg="#1A1A1A").pack(anchor="w", padx=35)
+        self.option_var = tk.StringVar()
+        self.options_combo = ttk.Combobox(root, textvariable=self.option_var, state="readonly", font=("Segoe UI", 10))
+        self.options_combo.pack(fill=tk.X, padx=35, pady=(2, 15), ipady=4)
+
+        # Nút Tải xuống Chính (Màu xanh dương của Windows 11)
+        self.download_btn = ModernButton(root, text="⬇ TẢI XUỐNG NGAY", bg="#005FB8", hover_bg="#004C93", command=self.download_thread)
+        self.download_btn.pack(fill=tk.X, padx=35, pady=(5, 10), ipady=5)
+        self.download_btn.set_state(tk.DISABLED)
+
+        # Thanh Tiến trình
+        self.progress = ttk.Progressbar(root, orient=tk.HORIZONTAL, mode='determinate')
+        self.progress.pack(fill=tk.X, padx=35, pady=5)
+        
+        status_frame = tk.Frame(root, bg=self.bg_color)
+        status_frame.pack(fill=tk.X, padx=35)
+        self.percent_label = tk.Label(status_frame, text="0%", font=("Segoe UI", 9, "bold"), bg=self.bg_color, fg="#1A1A1A")
+        self.percent_label.pack(side=tk.RIGHT)
+        self.status_label = tk.Label(status_frame, text="Sẵn sàng.", font=("Segoe UI", 9), bg=self.bg_color, fg="#666666")
+        self.status_label.pack(side=tk.LEFT)
+
+        # Auto fetch nếu có link từ Chrome
+        if initial_url:
+            self.fetch_info_thread()
+        elif not self.url_entry.get().strip():
+            # Mo app tay: tu dan link YouTube trong clipboard (neu co) cho do phai Ctrl+V
+            try:
+                clip = self.root.clipboard_get().strip()
+                if "youtube.com/" in clip or "youtu.be/" in clip:
+                    self.url_entry.insert(0, clip.split()[0])
+            except Exception:
+                pass
+
+        # Tu kiem tra FFmpeg sau khi mo app: thieu/hong thi tu tai (~119 MB, 1 lan)
+        self.root.after(500, self.ffmpeg_startup_check)
+
+    # --- FFMPEG: tu tai khi mo app / bam nut 🎬 / truoc khi tai video ---
+    def ffmpeg_startup_check(self):
+        if ffmpeg_missing(self.app_dir):
+            self.ffmpeg_download_thread(force=False)
+        else:
+            ver = ffmpeg_version(os.path.join(self.app_dir, "ffmpeg.exe"))
+            if ver:
+                self.status_label.config(text=f"Sẵn sàng. FFmpeg {ver} đã có.", fg="#107C10")
+
+    def ffmpeg_download_thread(self, force=False):
+        if self.ffmpeg_busy:
+            return
+        self.ffmpeg_busy = True
+        self.ffmpeg_btn.set_state(tk.DISABLED)
+        threading.Thread(target=self.run_ffmpeg_download, args=(force,), daemon=True).start()
+
+    def ffmpeg_update_thread(self):
+        # Bam nut 🎬: tai lai ban FFmpeg moi nhat, ke ca khi da co san
+        if messagebox.askyesno("Cập nhật FFmpeg",
+                "Tải lại bản FFmpeg mới nhất từ Gyan.dev?\nFile zip khoảng 119 MB, chỉ nên bấm khi FFmpeg cũ lỗi hoặc đã lâu chưa cập nhật."):
+            self.ffmpeg_download_thread(force=True)
+
+    def _ffmpeg_progress(self, done, total, stage):
+        if total > 0:
+            pct = int(done * 100 / total)
+            self.root.after(0, self.update_progress, pct)
+            self.root.after(0, self.status_label.config, {"text": f"{stage} {pct}% ({done // 1048576} / {total // 1048576} MB)", "fg": "#D83B01"})
+        else:
+            self.root.after(0, self.status_label.config, {"text": stage, "fg": "#D83B01"})
+
+    def run_ffmpeg_download(self, force=False):
+        missing = ffmpeg_missing(self.app_dir)
+        try:
+            if not force and not missing:
+                return
+            self.root.after(0, self.status_label.config, {"text": "Đang tải FFmpeg (khoảng 119 MB, chỉ 1 lần)...", "fg": "#D83B01"})
+            ver = download_ffmpeg(self.app_dir, progress_cb=self._ffmpeg_progress)
+            self.root.after(0, self.status_label.config, {"text": f"FFmpeg {ver} đã sẵn sàng.", "fg": "#107C10"})
+            self.root.after(0, self.update_progress, 100)
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = {"recent_dirs": self.recent_dirs}
+            cfg["ffmpeg_version"] = ver
+            cfg["ffmpeg_updated_at"] = time.strftime("%Y-%m-%d")
+            with open(self.config_file, "w", encoding="utf-8") as f:
+                json.dump(cfg, f)
+        except Exception as e:
+            self.root.after(0, self.status_label.config, {"text": f"Không tải được FFmpeg: {e}. Vẫn tải được video chất lượng thấp, MP3 thì cần FFmpeg.", "fg": "#C42B1C"})
+        finally:
+            self.ffmpeg_busy = False
+            self.root.after(0, self.ffmpeg_btn.set_state, tk.NORMAL)
+
+    def ensure_ffmpeg(self):
+        """Dung trong luong tai video: thieu FFmpeg thi tai ngay roi moi tai video."""
+        if self.ffmpeg_busy:
+            # Dang tai o luong khoi dong thi doi toi da 5 phut
+            for _ in range(300):
+                if not self.ffmpeg_busy:
+                    break
+                time.sleep(1)
+        if ffmpeg_missing(self.app_dir):
+            self.ffmpeg_busy = True
+            try:
+                ver = download_ffmpeg(self.app_dir, progress_cb=self._ffmpeg_progress)
+                self.root.after(0, self.status_label.config, {"text": f"FFmpeg {ver} đã sẵn sàng, bắt đầu tải video...", "fg": "#107C10"})
+            finally:
+                self.ffmpeg_busy = False
+                self.root.after(0, self.ffmpeg_btn.set_state, tk.NORMAL)
+
+    def on_combo_select(self, event):
+        self.update_recent_dirs(self.save_dir.get())
+
+    def browse_folder(self):
+        folder = filedialog.askdirectory(initialdir=self.save_dir.get())
+        if folder:
+            folder = os.path.normpath(folder)
+            self.update_recent_dirs(folder)
+
+    def update_recent_dirs(self, folder):
+        if folder in self.recent_dirs:
+            self.recent_dirs.remove(folder)
+        self.recent_dirs.insert(0, folder)
+        self.recent_dirs = self.recent_dirs[:5]
+        self.dir_combo['values'] = self.recent_dirs
+        self.save_dir.set(self.recent_dirs[0])
+        self.dir_combo.current(0)
+        try:
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = {}
+            cfg["recent_dirs"] = self.recent_dirs
+            with open(self.config_file, "w", encoding="utf-8") as f:
+                json.dump(cfg, f)
+        except: pass
+
+    def fetch_info_thread(self):
+        url = self.url_entry.get().strip()
+        if not url: return
+        
+        # 1. LÀM SẠCH URL: Tự động cắt bỏ đuôi Playlist (&list=) hoặc thời gian (&t=)
+        # Giúp yt-dlp đi thẳng vào video đơn lẻ, tốc độ quét sẽ tăng gấp chục lần
+        # CHỈ làm sạch link nếu người dùng KHÔNG tick chọn tải Playlist
+        if not self.is_playlist_var.get() and "watch?v=" in url and "&" in url:
+            url = url.split("&")[0]
+            # Cập nhật lại thanh địa chỉ cho gọn gàng
+            self.url_entry.delete(0, tk.END)
+            self.url_entry.insert(0, url)
+
+        self.status_label.config(text="Đang phân tích video...", fg="#D83B01")
+        self.check_btn.set_state(tk.DISABLED)
+        threading.Thread(target=self.fetch_info, args=(url,), daemon=True).start()
+
+    def fetch_info(self, url):
+        is_playlist = self.is_playlist_var.get()
+        ydl_opts = {
+            'quiet': True,
+            # Playlist: quet nhe (extract_flat) lay ten + so luong, khong tai sau tung video
+            'noplaylist': not is_playlist,
+            'source_address': '0.0.0.0', # ÉP DÙNG IPv4: Khắc phục triệt để lỗi treo/delay mạng
+            'extract_flat': 'in_playlist' if is_playlist else False,
+            'no_warnings': True,
+            'ignoreerrors': True
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            if not info:
+                raise RuntimeError("YouTube không trả về thông tin (video riêng tư / đã xóa / giới hạn độ tuổi?)")
+            if is_playlist:
+                entries = info.get('entries') or []
+                count = info.get('playlist_count') or len(entries)
+                title = info.get('title', 'Không xác định')
+                if count:
+                    title = f"{title} ({count} video)"
+                # Lay do phan giai tu video dau tien co formats (neu co)
+                resolutions = set()
+                for entry in entries[:3]:
+                    if isinstance(entry, dict):
+                        for f in entry.get('formats') or []:
+                            h = f.get('height')
+                            if h and f.get('vcodec') != 'none':
+                                resolutions.add(h)
+            else:
+                title = info.get('title', 'Không xác định')
+                resolutions = set()
+                for f in info.get('formats', []):
+                    height = f.get('height')
+                    if height and f.get('vcodec') != 'none':
+                        resolutions.add(height)
+
+            options = ["Tự động (Chất lượng Video & Âm thanh cao nhất)"]
+            for res in sorted(list(resolutions), reverse=True):
+                options.append(f"Video - {res}p")
+            options.append("Chỉ tải Âm thanh (MP3)")
+
+            self.root.after(0, self.update_ui_after_fetch, title, options)
+        except Exception as e:
+            err = str(e).strip()
+            if len(err) > 120:
+                err = err[:120] + "..."
+            self.root.after(0, self.status_label.config, {"text": f"Lỗi lấy thông tin: {err}", "fg": "#C42B1C"})
+            self.root.after(0, self.check_btn.set_state, tk.NORMAL)
+
+    def update_ui_after_fetch(self, title, options):
+        # Thông báo trực quan nếu đang tải playlist
+        if self.is_playlist_var.get():
+            title = f"📦 ĐANG CHỌN TẢI PLAYLIST:\n{title}"
+            
+        self.title_label.config(text=f"{title}", font=("Segoe UI", 11, "bold"), fg="#1A1A1A")
+        self.options_combo['values'] = options
+        if options: self.options_combo.current(0)
+        self.status_label.config(text="Đã lấy thông tin thành công.", fg="#107C10")
+        self.check_btn.set_state(tk.NORMAL)
+        self.download_btn.set_state(tk.NORMAL)
+
+    def download_thread(self):
+        url = self.url_entry.get().strip()
+        choice = self.options_combo.get()
+        if not url:
+            messagebox.showwarning("Thiếu link", "Hãy dán link YouTube rồi bấm Lấy thông tin trước.")
+            return
+        if not choice:
+            messagebox.showwarning("Chưa lấy thông tin", "Hãy bấm Lấy thông tin rồi chọn chất lượng trước khi tải.")
+            return
+        self.status_label.config(text="Đang tải xuống...", fg="#D83B01")
+        self.download_btn.set_state(tk.DISABLED)
+        self.progress['value'] = 0
+        self.percent_label.config(text="0%")
+        self.downloaded_file = None 
+        threading.Thread(target=self.download_video, args=(url, choice), daemon=True).start()
+
+    def my_hook(self, d):
+        if d['status'] == 'downloading':
+            total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            downloaded = d.get('downloaded_bytes', 0)
+            if total > 0:
+                percent = int((downloaded / total) * 100)
+                
+                # Cập nhật số thứ tự Video nếu đang tải Playlist
+                pl_idx = d.get('playlist_index')
+                pl_count = d.get('playlist_count')
+                if pl_idx and pl_count:
+                    status_text = f"Đang tải Video {pl_idx} / {pl_count}..."
+                    self.root.after(0, self.status_label.config, {"text": status_text, "fg": "#D83B01"})
+                    
+                self.root.after(0, self.update_progress, percent)
+                
+        elif d['status'] == 'finished':
+            if not self.downloaded_file:
+                self.downloaded_file = d.get('filename')
+            self.root.after(0, self.update_progress, 100)
+
+    def my_post_hook(self, d):
+        if d['status'] == 'finished':
+            filepath = d.get('info_dict', {}).get('filepath') or d.get('info_dict', {}).get('_filename')
+            if filepath:
+                self.downloaded_file = filepath
+
+    def update_progress(self, percent):
+        self.progress['value'] = percent
+        self.percent_label.config(text=f"{percent}%")
+
+    def download_video(self, url, choice):
+        # FFmpeg can cho gop video+audio va xuat MP3: thieu thi tu tai truoc,
+        # khong de yt-dlp tai xong ca video roi moi bao loi o buoc gop.
+        try:
+            self.ensure_ffmpeg()
+        except Exception as e:
+            self.root.after(0, messagebox.showerror, "Thiếu FFmpeg",
+                            f"Không tải được FFmpeg nên không gộp/xuất MP3 được.\nChi tiết: {e}\n\nHãy kiểm tra mạng rồi bấm lại, hoặc copy ffmpeg.exe + ffprobe.exe vào thư mục app.")
+            self.root.after(0, self.download_btn.set_state, tk.NORMAL)
+            self.root.after(0, self.status_label.config, {"text": "Thiếu FFmpeg, chưa tải video.", "fg": "#C42B1C"})
+            return
+        save_path = self.save_dir.get()
+        os.makedirs(save_path, exist_ok=True)
+
+        # Tự động lấy thư mục gốc chứa Tool để tìm chính xác ffmpeg.exe
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        is_playlist = self.is_playlist_var.get()
+        
+        # Logic đường dẫn thông minh cho Playlist
+        if is_playlist:
+            # Tạo thư mục con tên playlist, file có số thứ tự
+            out_template = '%(playlist_title)s/%(playlist_index)s - %(title)s.%(ext)s'
+        else:
+            out_template = '%(title)s.%(ext)s'
+            
+        ydl_opts = {
+            'outtmpl': os.path.join(save_path, out_template),
+            'noplaylist': not is_playlist, # Bật mode tải danh sách nếu chọn Playlist
+            'progress_hooks': [self.my_hook],
+            'postprocessor_hooks': [self.my_post_hook],
+            'concurrent_fragment_downloads': 5,
+            'ffmpeg_location': current_dir, # Ép tìm FFmpeg ngay tại thư mục hiện tại
+            #'cookiesfrombrowser': ('chrome',), # Vượt rào kiểm duyệt của YouTube
+            'ignoreerrors': True, # BỎ QUA VIDEO LỖI ĐỂ TẢI TIẾP PLAYLIST
+            'postprocessors': [] # Khởi tạo danh sách xử lý rỗng
+        }
+
+        if "Tự động" in choice:
+            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        elif "Âm thanh" in choice:
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegExtractAudio', 
+                'preferredcodec': 'mp3'
+            })
+        elif "Video -" in choice:
+            res_number = choice.split("-")[1].strip().replace("p", "")
+            ydl_opts['format'] = f'bestvideo[height<={res_number}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+            
+        # Thêm Metadata (Siêu dữ liệu) cho mọi file tải về
+        # Giúp file MP4/MP3 hiển thị đúng Tác giả, Tiêu đề trong máy nghe nhạc hoặc điện thoại
+        ydl_opts['postprocessors'].append({'key': 'FFmpegMetadata'})
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            # ignoreerrors=True nen yt-dlp co the "xong" ma khong co file nao
+            # (toan bo video loi): chi bao thanh cong khi file that su ton tai.
+            if self.downloaded_file and os.path.exists(self.downloaded_file):
+                self.root.after(0, self.download_complete)
+            else:
+                raise RuntimeError("yt-dlp báo xong nhưng không tìm thấy file đã tải (video có thể đã lỗi / bị chặn). Hãy thử Cập nhật lõi bằng nút 🔄 rồi tải lại.")
+        except Exception as e:
+            self.root.after(0, messagebox.showerror, "Lỗi", str(e))
+            self.root.after(0, self.download_btn.set_state, tk.NORMAL)
+            self.root.after(0, self.status_label.config, {"text": "Tải thất bại.", "fg": "#C42B1C"})
+
+    # --- HỘP THOẠI POPUP PHONG CÁCH MỚI ---
+    def download_complete(self):
+        self.status_label.config(text="Hoàn tất!", fg="#107C10")
+        self.download_btn.set_state(tk.NORMAL)
+        
+        top = tk.Toplevel(self.root)
+        top.title("Thành công")
+        top.geometry("460x220")
+        top.resizable(False, False)
+        top.attributes('-topmost', True) 
+        top.configure(bg=self.bg_color)
+        
+        top.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (460 // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (220 // 2)
+        top.geometry(f"+{x}+{y}")
+        
+        tk.Label(top, text="🎉 ĐÃ TẢI XONG!", font=("Segoe UI", 14, "bold"), bg=self.bg_color, fg="#107C10").pack(pady=(15, 5))
+        
+        path = self.save_dir.get()
+        if len(path) > 50: path = path[:25] + "..." + path[-20:]
+        tk.Label(top, text=f"File đã được lưu an toàn tại:\n{path}", font=("Segoe UI", 10), bg=self.bg_color, fg="#1A1A1A", justify=tk.CENTER).pack(pady=5)
+        
+        def open_file():
+            try:
+                if self.downloaded_file and os.path.exists(self.downloaded_file): os.startfile(self.downloaded_file)
+                else: os.startfile(self.save_dir.get())
+            except: pass
+
+        def open_folder():
+            try:
+                if self.downloaded_file and os.path.exists(self.downloaded_file):
+                    import subprocess
+                    subprocess.Popen(f'explorer /select,"{os.path.normpath(self.downloaded_file)}"')
+                else: os.startfile(self.save_dir.get())
+            except: pass
+        
+        btn_frame1 = tk.Frame(top, bg=self.bg_color)
+        btn_frame1.pack(pady=5)
+        ModernButton(btn_frame1, text="▶ Mở File", bg="#005FB8", hover_bg="#004C93", command=open_file, width=16).pack(side=tk.LEFT, padx=10, ipady=3)
+        ModernButton(btn_frame1, text="📁 Mở Thư mục", bg="#6C757D", hover_bg="#5A6268", command=open_folder, width=16).pack(side=tk.LEFT, padx=10, ipady=3)
+        
+        btn_frame2 = tk.Frame(top, bg=self.bg_color)
+        btn_frame2.pack(pady=5)
+        ModernButton(btn_frame2, text="Tải tiếp video", bg="#4CAF50", hover_bg="#388E3C", command=top.destroy, width=16).pack(side=tk.LEFT, padx=10, ipady=3)
+        ModernButton(btn_frame2, text="Đóng phần mềm", bg="#C42B1C", hover_bg="#A42012", command=self.root.destroy, width=16).pack(side=tk.LEFT, padx=10, ipady=3)
+
+        top.focus_set()
+        top.grab_set()
+
+    def update_core_thread(self):
+        self.status_label.config(text="Đang tải bản cập nhật yt-dlp... Vui lòng chờ.", fg="#D83B01")
+        self.update_btn.set_state(tk.DISABLED)
+        threading.Thread(target=self.run_update, daemon=True).start()
+
+    def run_update(self):
+        import subprocess
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], creationflags=subprocess.CREATE_NO_WINDOW)
+            self.root.after(0, self.status_label.config, {"text": "Cập nhật yt-dlp thành công! Khởi động lại app để dùng bản mới.", "fg": "#107C10"})
+        except Exception as e:
+            self.root.after(0, messagebox.showerror, "Lỗi", f"Không thể cập nhật. Chi tiết: {e}")
+        finally:
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+
+if __name__ == "__main__":
+    init_url = parse_launch_url(sys.argv[1]) if len(sys.argv) > 1 else ""
+    root = tk.Tk()
+    app = YouTubeDownloaderApp(root, init_url)
+    root.mainloop()

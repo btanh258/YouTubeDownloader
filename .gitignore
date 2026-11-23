@@ -1,0 +1,15 @@
+# FFmpeg tu tai khi mo app lan dau, khong push file nhi phan nang len GitHub
+app/ffmpeg.exe
+app/ffprobe.exe
+app/ffplay.exe
+app/.ffmpeg-download.zip
+# Cau hinh may ca nhan (duong dan luu gan day)
+app/config.json
+# Khoa ky extension / file dong goi - tuyet doi khong push
+*.pem
+*.crx
+# Python
+__pycache__/
+*.pyc
+# File dong goi phat hanh
+*.zip
