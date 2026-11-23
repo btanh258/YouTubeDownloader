@@ -48,7 +48,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.3.0"
+VERSION = "2.3.1"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -108,6 +108,16 @@ def _exe_version(exe_path):
         return m.group(0) if m else ""
     except Exception:
         return ""
+
+
+def is_onefile_build():
+    """True neu exe dang chay la ban onefile (cau cu): DLL nam trong _MEIPASS
+    o %TEMP%, khong co thu muc _internal canh exe. Ban onedir thi co
+    _internal canh exe. Chay .py thi False."""
+    if not is_frozen():
+        return False
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    return not os.path.isdir(os.path.join(exe_dir, "_internal"))
 
 
 def _is_app_folder(folder):
@@ -180,10 +190,30 @@ def maybe_install_and_relaunch():
                 return True
             except Exception:
                 pass
-    # Chi cai dat khi exe dang chay trong thu muc app dung ten: neu nguoi dung
-    # giai nen zip le ra cho khac (exe nam thang trong Downloads) thi copy
-    # ca thu muc do se copy nham file cua nguoi dung.
-    if not _is_app_folder(exe_dir):
+    # Chi cai dat khi exe dang chay trong thu muc app dung ten, hoac la ban
+    # onefile (cau cu). Neu nguoi dung giai nen zip le ra cho khac (exe
+    # onedir nam thang trong Downloads) thi copy ca thu muc do se copy nham
+    # file cua nguoi dung.
+    if _is_app_folder(exe_dir):
+        try:
+            os.makedirs(install_dir(), exist_ok=True)
+            _install_app_folder(exe_dir, install_dir())
+            copy_bundled_extension()
+            register_protocol(installed)
+            create_desktop_shortcut(installed)
+        except Exception:
+            return False
+    elif is_onefile_build():
+        # Ban onefile (cau cu): chi copy 1 file exe nhu cu
+        try:
+            os.makedirs(install_dir(), exist_ok=True)
+            shutil.copy2(current, installed)
+            copy_bundled_extension()
+            register_protocol(installed)
+            create_desktop_shortcut(installed)
+        except Exception:
+            return False
+    else:
         try:
             import ctypes as _ct0
             _ct0.windll.user32.MessageBoxW(
@@ -212,14 +242,6 @@ def maybe_install_and_relaunch():
         except Exception:
             pass
         register_protocol(current)
-        return False
-    try:
-        os.makedirs(install_dir(), exist_ok=True)
-        _install_app_folder(exe_dir, install_dir())
-        copy_bundled_extension()
-        register_protocol(installed)
-        create_desktop_shortcut(installed)
-    except Exception:
         return False
     # Ban cai ma khong chay duoc thi khong mo no, bao loi de nguoi dung biet
     ok, _v = verify_exe_retry(installed, VERSION)
@@ -607,7 +629,11 @@ def apply_update(new_dir, current_exe):
     if not os.path.isdir(new_dir):
         return None
     old_dir = os.path.dirname(os.path.abspath(current_exe))
-    if not _is_app_folder(old_dir):
+    # Thu muc cu phai la thu muc app dung ten, hoac la thu muc cai dat co dinh
+    # (truong hop ban onefile cu cap nhat len onedir). Cac thu muc khac
+    # (vd Downloads) thi khong doi, de tranh xoa nham file nguoi dung.
+    if (not _is_app_folder(old_dir)
+            and os.path.normcase(old_dir) != os.path.normcase(install_dir())):
         return None
     try:
         helper = os.path.join(tempfile.gettempdir(), "ytdl_update.bat")
@@ -1541,15 +1567,30 @@ class YouTubeDownloaderApp:
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
         if not is_newer(release.get("tag", ""), VERSION):
-            self.root.after(0, self.status_label.config, {"text": f"Đã là bản mới nhất ({VERSION}).", "fg": "#107C10"})
-            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            # Ban dang dung da la moi nhat, NHUNG neu dang chay ban onefile
+            # (cau cu, hay loi DLL) ma release co file zip dong goi onedir
+            # thi van de nghi chuyen sang dang onedir de het loi DLL.
+            # (Can cho ban cau noi 2.3.1 onefile: ban 2.2.x cap nhat len exe
+            # cau noi roi bam cap nhat them 1 lan nua de chuyen sang onedir.)
+            if is_onefile_build() and pick_update_asset(release):
+                self.root.after(0, self.prompt_app_update, release)
+            else:
+                self.root.after(0, self.status_label.config, {"text": f"Đã là bản mới nhất ({VERSION}).", "fg": "#107C10"})
+                self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
         self.root.after(0, self.prompt_app_update, release)
 
     def prompt_app_update(self, release):
         tag = release.get("tag", "")
         notes = (release.get("notes") or "")[:300]
-        if not messagebox.askyesno("Có bản mới", f"Có bản {tag} (bạn đang dùng {VERSION}).\n\n{notes}\n\nTải và cài đặt ngay? App sẽ tự mở lại bản mới, extension cũng được cập nhật theo (nhớ bấm Reload extension trên chrome://extensions)."):
+        if not is_newer(tag, VERSION):
+            # Chuyen dang dong goi: cung version, chi doi tu onefile sang onedir
+            if not messagebox.askyesno("Đổi dạng đóng gói",
+                    "Bạn đang dùng bản đóng gói cũ (1 file exe), bản này hay bị lỗi DLL sau khi cập nhật.\n\nCó bản đóng gói mới (thư mục app) giúp hết lỗi này. Chuyển sang bản mới ngay? App sẽ tự mở lại bản mới, extension cũng được cập nhật theo (nhớ bấm Reload extension trên chrome://extensions)."):
+                self.status_label.config(text="Đã hủy cập nhật.", fg="#666666")
+                self.update_btn.set_state(tk.NORMAL)
+                return
+        elif not messagebox.askyesno("Có bản mới", f"Có bản {tag} (bạn đang dùng {VERSION}).\n\n{notes}\n\nTải và cài đặt ngay? App sẽ tự mở lại bản mới, extension cũng được cập nhật theo (nhớ bấm Reload extension trên chrome://extensions)."):
             self.status_label.config(text="Đã hủy cập nhật.", fg="#666666")
             self.update_btn.set_state(tk.NORMAL)
             return

@@ -101,6 +101,18 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.3.1 (so với 2.3.0)
+
+- **Sửa lỗi "Release mới không có file YouTubeDownloader.exe để tải" khi
+  cập nhật từ bản 2.2.x:** bản cũ chỉ biết tải file exe, mà release 2.3.0
+  chỉ có file zip nên cập nhật thất bại. Từ 2.3.1, release kèm cả 2 file:
+  file zip onedir (cho người mới) và file exe 1 file làm cầu nối. Bản
+  2.2.x bấm cập nhật sẽ tải exe cầu nối 2.3.1 về trước, rồi bấm cập nhật
+  thêm 1 lần nữa để chuyển sang dạng thư mục app (hết lỗi DLL). Bản
+  2.3.0 onedir cập nhật lên 2.3.1 bình thường bằng file zip.
+- Cài đặt: bản onefile cũ vẫn cài bằng cách copy 1 file exe như trước,
+  bản onedir cài bằng cách copy cả thư mục app.
+
 ## Thay đổi trong 2.3.0 (so với 2.2.6) — SỬA TRIỆT ĐỂ LỖI DLL
 
 - **Đổi từ onefile sang onedir (thư mục app).** Đây mới là gốc của lỗi
