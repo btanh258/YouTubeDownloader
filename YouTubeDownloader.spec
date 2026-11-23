@@ -1,5 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Build 1 file exe duy nhat cho YouTube Downloader.
+# Build thu muc app (onedir) cho YouTube Downloader.
+# Tu 2.3.0 khong dung onefile nua: onefile tu giai nen python311.dll ra
+# %TEMP%\_MEI* moi lan mo app, Defender chan file DLL vua giai nen ngay
+# sau khi cap nhat nen bao loi "Failed to load Python DLL" 1 lan.
+# Onedir de python311.dll + cac DLL canh file exe trong thu muc app nen
+# khong con buoc giai nen, loi nay khong the xay ra nua. Nguoi dung van
+# chi can bam 1 file exe duy nhat (YouTubeDownloader.exe) de chay app.
 # Chay tren Windows: python -m PyInstaller --noconfirm --clean YouTubeDownloader.spec
 # (xem Build_YouTubeDownloader.bat). Khong build duoc exe Windows tren Linux.
 
@@ -25,16 +31,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='YouTubeDownloader',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -42,4 +45,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['app/icon_Youtube.ico'],
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='YouTubeDownloader',
 )

@@ -101,6 +101,28 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.3.0 (so với 2.2.6) — SỬA TRIỆT ĐỂ LỖI DLL
+
+- **Đổi từ onefile sang onedir (thư mục app).** Đây mới là gốc của lỗi
+  "Failed to load Python DLL" cứ tái diễn sau mỗi lần cập nhật: bản onefile
+  tự giải nén `python311.dll` ra `%TEMP%\_MEI*` mỗi lần mở app, mà file
+  vừa cập nhật xong thì Defender vẫn đang quét, nên lần mở đầu tiên sau
+  cập nhật hay bị chặn DLL (mở lại lần sau thì hết, vì Defender đã quét
+  xong). Đợi 5 giây (2.2.5) không sửa được vì Defender quét file DLL lúc
+  giải nén, tức là SAU khi mở app. Bản onedir để `python311.dll` và các
+  DLL nằm cạnh file exe trong thư mục app, không còn bước giải nén ra
+  `%TEMP%` nữa nên lỗi này không thể xảy ra.
+- **Cách dùng mới:** tải file `YouTubeDownloader-v2.3.0.zip` ở trang
+  Releases, giải nén ra thư mục `YouTubeDownloader`, chạy file
+  `YouTubeDownloader.exe` trong đó (vẫn chỉ có 1 file exe để bấm).
+  Lần đầu chạy vẫn hỏi cài đặt như cũ (copy cả thư mục app vào
+  `%LOCALAPPDATA%\YouTubeDownloader`).
+- **Tự cập nhật đổi theo:** app tải file zip bản mới về, giải nén, kiểm
+  tra exe mới chạy được, mang config/FFmpeg/log sang thư mục mới rồi đổi
+  cả thư mục app (thư mục cũ đổi tên thành `YouTubeDownloader.old` để
+  phòng hờ, app mở lên được sẽ tự xóa). Bản 2.2.x cập nhật lên 2.3.0
+  vẫn chạy được (app cũ tải zip mới về rồi đổi thư mục như thường).
+
 ## Thay đổi trong 2.2.6 (so với 2.2.5)
 
 - **Mở file/thư mục thì đóng luôn phần mềm:** hộp thoại "ĐÃ TẢI XONG!" trước

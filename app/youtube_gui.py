@@ -48,11 +48,17 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.2.6"
+VERSION = "2.3.0"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-UPDATE_ASSET_NAME = "YouTubeDownloader.exe"
+# Tu 2.3.0 app dong goi onedir (thu muc app) chu khong phai onefile nua,
+# nen file cap nhat la file zip chua thu muc app, vd YouTubeDownloader-v2.3.0.zip
+UPDATE_ASSET_PREFIX = "youtubedownloader-v"
+# File du lieu cua app (config, FFmpeg, log, danh dau portable) - khi cap
+# nhat / cai dat thi mang theo sang thu muc moi, khong de mat.
+APP_DATA_FILES = ("config.json", "ffmpeg.exe", "ffprobe.exe",
+                  "YouTubeDownloader.log", "YouTubeDownloader.portable")
 
 
 def is_frozen():
@@ -104,11 +110,52 @@ def _exe_version(exe_path):
         return ""
 
 
+def _is_app_folder(folder):
+    """Thu muc co phai thu muc app (onedir) khong: ten dung 'YouTubeDownloader'
+    va co file exe + thu muc _internal. Dung de tranh copy / doi nham ca thu
+    muc chung (vd Downloads) khi cai dat / cap nhat."""
+    try:
+        return (os.path.basename(os.path.normpath(folder)) == APP_NAME
+                and os.path.isfile(os.path.join(folder, "YouTubeDownloader.exe"))
+                and os.path.isdir(os.path.join(folder, "_internal")))
+    except Exception:
+        return False
+
+
+def _install_app_folder(src_dir, dst_dir):
+    """Copy ca thu muc app tu src_dir sang dst_dir (xoa sach dst truoc).
+    Cac file du lieu cua app dang co trong dst (config, FFmpeg, log...) duoc
+    giu lai: chuyen tam ra cho khac truoc, copy xong thi tra ve neu thu muc
+    moi chua co."""
+    tmp = None
+    try:
+        tmp = tempfile.mkdtemp(prefix="ytdl-data-")
+        for name in APP_DATA_FILES:
+            p = os.path.join(dst_dir, name)
+            if os.path.isfile(p):
+                shutil.move(p, os.path.join(tmp, name))
+    except Exception:
+        pass
+    if os.path.isdir(dst_dir):
+        shutil.rmtree(dst_dir, ignore_errors=True)
+    shutil.copytree(src_dir, dst_dir)
+    if tmp:
+        for name in APP_DATA_FILES:
+            p = os.path.join(dst_dir, name)
+            q = os.path.join(tmp, name)
+            if not os.path.exists(p) and os.path.isfile(q):
+                try:
+                    shutil.move(q, p)
+                except Exception:
+                    pass
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def maybe_install_and_relaunch():
     """Chi dung khi chay exe dong goi: neu exe chua o thu muc cai dat thi hoi
-    nguoi dung co cai dat khong. Cai thi copy exe + extension, dang ky protocol,
-    tao shortcut Desktop, mo lai ban da cai roi thoat ban nay. Tra ve True neu
-    da mo lai ban cai dat (caller nen thoat ngay).
+    nguoi dung co cai dat khong. Cai thi copy CA THU MUC APP + extension,
+    dang ky protocol, tao shortcut Desktop, mo lai ban da cai roi thoat ban
+    nay. Tra ve True neu da mo lai ban cai dat (caller nen thoat ngay).
     Chi hoi 1 lan cho moi ban exe: chon No thi ghi file danh dau portable ben
     canh exe, lan sau khong hoi nua. Neu da co ban cai san bang hoac moi hon
     thi mo thang ban do, khong hoi."""
@@ -133,6 +180,19 @@ def maybe_install_and_relaunch():
                 return True
             except Exception:
                 pass
+    # Chi cai dat khi exe dang chay trong thu muc app dung ten: neu nguoi dung
+    # giai nen zip le ra cho khac (exe nam thang trong Downloads) thi copy
+    # ca thu muc do se copy nham file cua nguoi dung.
+    if not _is_app_folder(exe_dir):
+        try:
+            import ctypes as _ct0
+            _ct0.windll.user32.MessageBoxW(
+                None,
+                "Không cài đặt được: file exe không nằm trong thư mục app 'YouTubeDownloader'.\n\nHãy giải nén file zip ra thư mục YouTubeDownloader rồi chạy file exe trong đó.",
+                "Cài đặt YouTube Downloader", 0x10)
+        except Exception:
+            pass
+        return False
     try:
         import ctypes as _ct
         ans = _ct.windll.user32.MessageBoxW(
@@ -155,21 +215,20 @@ def maybe_install_and_relaunch():
         return False
     try:
         os.makedirs(install_dir(), exist_ok=True)
-        shutil.copy2(current, installed)
+        _install_app_folder(exe_dir, install_dir())
         copy_bundled_extension()
         register_protocol(installed)
         create_desktop_shortcut(installed)
     except Exception:
         return False
-    # Ban cai ma khong chay duoc (loi DLL) thi khong mo no, bao loi de nguoi
-    # dung biet ma xu ly chu khong im lang mo ban hong
+    # Ban cai ma khong chay duoc thi khong mo no, bao loi de nguoi dung biet
     ok, _v = verify_exe_retry(installed, VERSION)
     if not ok:
         try:
             import ctypes as _ct2
             _ct2.windll.user32.MessageBoxW(
                 None,
-                "Bản vừa cài không chạy được trên máy này (lỗi DLL khi khởi động).\n\nHãy thử: xóa thư mục %TEMP%\\_MEI*, kiểm tra Windows Security → Protection history xem python311.dll có bị cách ly không, rồi chạy lại file exe.",
+                "Bản vừa cài không chạy được trên máy này. Hãy thử chạy lại file exe.",
                 "Cài đặt thất bại", 0x10)
         except Exception:
             pass
@@ -385,18 +444,19 @@ def fetch_latest_release(timeout=8):
 
 
 def pick_update_asset(release):
-    """Tra ve dict asset {url, size, digest} cua file exe cap nhat, hoac None.
+    """Tra ve dict asset {url, size, digest} cua file zip cap nhat, hoac None.
+    File cap nhat tu 2.3.0 la zip chua thu muc app, vd YouTubeDownloader-v2.3.0.zip.
     digest cua GitHub co dang 'sha256:<hex>' - dung de kiem tra file tai ve
-    co day du / nguyen ven khong truoc khi thay exe cu."""
+    co day du / nguyen ven khong truoc khi thay ban cu."""
     if not isinstance(release, dict):
         return None
     fallback = None
     for a in release.get("assets") or []:
         url = a.get("url") or ""
         name = (a.get("name") or "").lower()
-        if name == UPDATE_ASSET_NAME.lower():
+        if name.startswith(UPDATE_ASSET_PREFIX) and name.endswith(".zip"):
             return a
-        if fallback is None and name.endswith(".exe"):
+        if fallback is None and name.endswith(".zip") and not name.startswith("source code"):
             fallback = a
     return fallback
 
@@ -482,50 +542,78 @@ def download_asset(url, destination, progress=None):
     return destination
 
 
+def extract_update_zip(zip_path, dest_dir):
+    """Giai nen file zip cap nhat vao dest_dir, tra ve duong dan thu muc app
+    moi (dest_dir/YouTubeDownloader) hoac None neu zip loi / thieu exe."""
+    try:
+        if os.path.isdir(dest_dir):
+            shutil.rmtree(dest_dir, ignore_errors=True)
+        os.makedirs(dest_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as z:
+            z.extractall(dest_dir)
+        app_dir = os.path.join(dest_dir, APP_NAME)
+        if not os.path.isfile(os.path.join(app_dir, "YouTubeDownloader.exe")):
+            return None
+        return app_dir
+    except Exception:
+        return None
+
+
+def migrate_app_data(src_dir, dst_dir):
+    """Mang cac file du lieu cua app (config, FFmpeg, log...) tu thu muc cu
+    sang thu muc moi, chi copy nhung file thu muc moi chua co."""
+    for name in APP_DATA_FILES:
+        s = os.path.join(src_dir, name)
+        d = os.path.join(dst_dir, name)
+        if os.path.isfile(s) and not os.path.exists(d):
+            try:
+                shutil.copy2(s, d)
+            except Exception:
+                pass
+
+
 _UPDATE_SCRIPT = r"""@echo off
 setlocal
-set "OLD={old}"
-set "NEW={new}"
-set /a tries=0
-:retry
-set /a tries+=1
-move /y "%NEW%" "%OLD%" >nul 2>&1
-if not errorlevel 1 goto swapped
-if %tries% GEQ 120 goto failed
+set "OLD={old_dir}"
+set "NEW={new_dir}"
+set "BAK={old_dir}.old"
+set "EXE={old_dir}\YouTubeDownloader.exe"
+rem Doi app thoat han (tien trinh cu bien mat) roi moi doi thu muc,
+rem vi Windows khoa file exe dang chay. Neu app van chua thoat sau
+rem 60 giay thi cu thu doi (that bai thi exe cu van chay binh thuong).
+set /a wtry=0
+:wait
+set /a wtry+=1
+tasklist /FI "IMAGENAME eq YouTubeDownloader.exe" 2>nul | find /I "YouTubeDownloader.exe" >nul
+if errorlevel 1 goto gone
+if %wtry% GEQ 60 goto gone
 ping -n 2 127.0.0.1 >nul
-goto retry
-:failed
-start "" "%OLD%"
-del "%~f0" >nul 2>&1
-exit /b 1
-:swapped
-del "%NEW%" >nul 2>&1
-rem Doi 5 giay truoc khi mo exe moi: file vua ghi xuong dia, Defender dang
-rem quet no, mo ngay lap tuc de bi loi "Failed to load Python DLL" 1 lan
-rem (mo lai lan sau thi het, vi Defender da quet xong).
-ping -n 6 127.0.0.1 >nul
-start "" "%OLD%"
+goto wait
+:gone
+if exist "%BAK%" rmdir /s /q "%BAK%" >nul 2>&1
+ren "%OLD%" "YouTubeDownloader.old" >nul 2>&1
+move /y "%NEW%" "%OLD%" >nul 2>&1
+start "" "%EXE%"
 del "%~f0" >nul 2>&1
 exit /b 0
 """
 
 
-def apply_update(new_exe, current_exe):
-    """Viet file .bat doi exe cu bang exe moi sau khi app thoat, roi chay no.
-    Tra ve duong dan file .bat hoac None. Caller phai thoat app ngay sau do."""
-    if not os.path.isfile(new_exe):
+def apply_update(new_dir, current_exe):
+    """Viet file .bat doi thu muc app cu bang thu muc app moi sau khi app
+    thoat, roi chay ban moi. Tra ve duong dan file .bat hoac None.
+    Caller phai thoat app ngay sau do. Thu muc cu duoc doi ten thanh
+    '<thu muc>.old' de phong ban moi loi, app mo len duoc se tu xoa."""
+    if not os.path.isdir(new_dir):
         return None
-    # Sao luu exe cu: neu exe moi bi loi (vd Failed to load Python DLL),
-    # nguoi dung doi ten file .bak lai la co ban cu chay duoc.
-    try:
-        shutil.copy2(os.path.abspath(current_exe), os.path.abspath(current_exe) + ".bak")
-    except Exception:
-        pass
+    old_dir = os.path.dirname(os.path.abspath(current_exe))
+    if not _is_app_folder(old_dir):
+        return None
     try:
         helper = os.path.join(tempfile.gettempdir(), "ytdl_update.bat")
         with open(helper, "w", encoding="utf-8", newline="\r\n") as f:
-            f.write(_UPDATE_SCRIPT.format(old=os.path.abspath(current_exe),
-                                          new=os.path.abspath(new_exe)))
+            f.write(_UPDATE_SCRIPT.format(old_dir=old_dir,
+                                          new_dir=os.path.abspath(new_dir)))
         flags = 0
         for n in ("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"):
             flags |= getattr(subprocess, n, 0)
@@ -1331,12 +1419,17 @@ class YouTubeDownloaderApp:
         exe_dir = os.path.dirname(exe_path)
         is_installed = os.path.normcase(exe_dir) == os.path.normcase(install_dir())
         if is_installed:
-            what = "Thư mục cài đặt (exe, FFmpeg, extension, config, log)"
+            what = "Thư mục cài đặt (thư mục app, gồm exe, DLL, FFmpeg, extension, config, log)"
+            cleanup = 'rmdir /s /q "%DIR%" >nul 2>&1\r\n'
+        elif _is_app_folder(exe_dir):
+            # Portable onedir: exe nam trong thu muc app dung ten thi xoa ca
+            # thu muc app do (chi chua file cua app)
+            what = f"Thư mục app đang chạy ({exe_dir})"
             cleanup = 'rmdir /s /q "%DIR%" >nul 2>&1\r\n'
         else:
-            # Portable: exe dang o thu muc chung (vd Downloads) nen CHI duoc xoa
-            # dung file exe + cac file cua app trong thu muc do, tuyet doi khong
-            # xoa ca thu muc (se xoa nham file cua nguoi dung)
+            # Portable: exe nam le trong thu muc chung (vd Downloads) nen CHI
+            # duoc xoa file exe + cac file cua app trong thu muc do, tuyet
+            # doi khong xoa ca thu muc (se xoa nham file cua nguoi dung)
             what = f"File exe đang chạy ({exe_path}) và các file của app bên cạnh nó (FFmpeg, extension, config, log)"
             cleanup = ('del "%DIR%\\config.json" >nul 2>&1\r\n'
                        'del "%DIR%\\ffmpeg.exe" >nul 2>&1\r\n'
@@ -1466,23 +1559,23 @@ class YouTubeDownloaderApp:
     def run_app_update_download(self, release):
         asset = pick_update_asset(release)
         if not asset or not asset.get("url"):
-            self.root.after(0, messagebox.showerror, "Lỗi", "Release mới không có file YouTubeDownloader.exe để tải.")
+            self.root.after(0, messagebox.showerror, "Lỗi", "Release mới không có file zip cập nhật để tải.")
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
         url = asset["url"]
-        new_exe = os.path.join(tempfile.gettempdir(), "YouTubeDownloader-new.exe")
+        new_zip = os.path.join(tempfile.gettempdir(), "YouTubeDownloader-new.zip")
         def _prog(done, total):
             if total > 0:
                 pct = int(done * 100 / total)
                 self.root.after(0, self.update_progress, pct)
                 self.root.after(0, self.status_label.config, {"text": f"Đang tải bản mới... {pct}% ({done // 1048576} / {total // 1048576} MB)", "fg": "#D83B01"})
-        got = download_asset(url, new_exe, progress=_prog)
+        got = download_asset(url, new_zip, progress=_prog)
         if not got or os.path.getsize(got) < 1_000_000:
             self.root.after(0, messagebox.showerror, "Lỗi", "Tải bản mới thất bại (file lỗi / mạng ngắt). Hãy thử lại. Bản cũ vẫn giữ nguyên.")
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
-        # Kiem tra nguyen ven truoc khi thay exe cu: file tai ve ma thieu byte
-        # thi exe moi se loi "Failed to load Python DLL" va khong mo duoc nua.
+        # Kiem tra nguyen ven truoc khi thay ban cu: file tai ve ma thieu byte
+        # thi ban moi se loi va khong mo duoc nua.
         expect_size = asset.get("size") or 0
         expect_digest = (asset.get("digest") or "").removeprefix("sha256:")
         bad = False
@@ -1502,24 +1595,31 @@ class YouTubeDownloaderApp:
             self.root.after(0, messagebox.showerror, "Lỗi", "File bản mới tải về không đầy đủ (mạng ngắt giữa chừng). Đã hủy cập nhật, bản cũ vẫn giữ nguyên. Hãy bấm cập nhật lại.")
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
-        # Kiem tra lan cuoi: exe moi tai ve co chay duoc tren may nay khong.
-        # Neu khong (vd loi DLL do Defender chan / thieu thu vien) thi huy
-        # cap nhat, giu nguyen exe cu dang chay tot.
-        ok, got_ver = verify_exe_retry(got, release.get("tag", ""))
+        # Giai nen zip ra thu muc tam roi kiem tra exe moi co chay duoc khong.
+        # Neu khong chay duoc thi huy cap nhat, giu nguyen ban cu dang tot.
+        new_dir = extract_update_zip(got, os.path.join(tempfile.gettempdir(), "ytdl-update"))
+        try:
+            os.remove(got)
+        except Exception:
+            pass
+        if not new_dir:
+            self.root.after(0, messagebox.showerror, "Lỗi", "Giải nén bản mới thất bại. Đã hủy cập nhật, bản cũ vẫn giữ nguyên.")
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            return
+        new_exe = os.path.join(new_dir, "YouTubeDownloader.exe")
+        ok, got_ver = verify_exe_retry(new_exe, release.get("tag", ""))
         if not ok:
-            try:
-                os.remove(got)
-            except Exception:
-                pass
-            self.root.after(0, messagebox.showerror, "Lỗi", "File exe mới tải về không chạy được trên máy này (lỗi DLL khi khởi động). Đã hủy cập nhật, bản cũ vẫn giữ nguyên.\n\nHãy thử: xóa thư mục %TEMP%\\_MEI*, kiểm tra Windows Security → Protection history xem python311.dll có bị cách ly không, rồi cập nhật lại.")
+            self.root.after(0, messagebox.showerror, "Lỗi", "File exe mới tải về không chạy được trên máy này. Đã hủy cập nhật, bản cũ vẫn giữ nguyên.")
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
+        # Mang du lieu cua app (config, FFmpeg, log) sang thu muc moi
+        migrate_app_data(self.app_dir, new_dir)
         current_exe = os.path.abspath(sys.executable)
-        if not apply_update(got, current_exe):
-            self.root.after(0, messagebox.showerror, "Lỗi", "Không khởi động được trình cập nhật. Hãy tải tay file exe ở trang Releases.")
+        if not apply_update(new_dir, current_exe):
+            self.root.after(0, messagebox.showerror, "Lỗi", "Không khởi động được trình cập nhật. Hãy tải tay file zip ở trang Releases, giải nén rồi chạy file exe trong thư mục YouTubeDownloader.")
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
-        # File .bat se doi exe sau khi app thoat roi mo lai ban moi
+        # File .bat se doi thu muc app sau khi app thoat roi mo lai ban moi
         self.root.after(0, self.root.destroy)
 
 if __name__ == "__main__":
@@ -1535,9 +1635,14 @@ if __name__ == "__main__":
             register_protocol(os.path.abspath(sys.executable))
         except Exception:
             pass
-    # App mo len duoc nghia la ban moi chay tot: xoa ban sao luu .bak cu
+    # App mo len duoc nghia la ban moi chay tot: xoa thu muc sao luu .old
+    # (ban truoc doi ten lai khi cap nhat) va file .bak cua ban 2.2.x neu con
     if is_frozen():
         try:
+            _parent = os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
+            _old = os.path.join(_parent, APP_NAME + ".old")
+            if os.path.isdir(_old):
+                shutil.rmtree(_old, ignore_errors=True)
             _bak = os.path.abspath(sys.executable) + ".bak"
             if os.path.exists(_bak):
                 os.remove(_bak)
