@@ -13,3 +13,7 @@ __pycache__/
 *.pyc
 # File dong goi phat hanh
 *.zip
+# Build PyInstaller
+dist/
+build/
+YouTubeDownloader-*.zip

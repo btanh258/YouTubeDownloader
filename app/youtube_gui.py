@@ -4,6 +4,13 @@ from tkinter import ttk, messagebox, filedialog
 import tkinter.font as tkfont
 import yt_dlp
 import threading
+import webbrowser
+try:
+    import winreg
+    _HAS_WINREG = True
+except Exception:
+    winreg = None
+    _HAS_WINREG = False
 import os
 import json
 import ctypes
@@ -38,6 +45,322 @@ def parse_launch_url(arg):
     if "%3A" in url.upper() or "%2F" in url.upper():
         url = urllib.parse.unquote(url)
     return url.strip()
+
+VERSION = "2.2.0"
+APP_NAME = "YouTubeDownloader"
+GITHUB_REPO = "btanh258/YouTubeDownloader"
+RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+UPDATE_ASSET_NAME = "YouTubeDownloader.exe"
+
+
+def is_frozen():
+    return bool(getattr(sys, "frozen", False))
+
+
+def resource_path(rel):
+    """Duong dan file dong kem trong exe (PyInstaller _MEIPASS) hoac trong source.
+    Khi chay .py: icon o cung thu muc app/, extension o thu muc goc (canh app/)."""
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return os.path.join(base, rel)
+    here = os.path.dirname(os.path.abspath(__file__))
+    cand = os.path.join(here, rel)
+    if os.path.exists(cand):
+        return cand
+    return os.path.join(os.path.dirname(here), rel)
+
+
+def install_dir():
+    """Thu muc cai dat co dinh tren Windows (LOCALAPPDATA/YouTubeDownloader)."""
+    local = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(local, APP_NAME)
+
+
+def data_dir():
+    """Noi luu config + FFmpeg + extension.
+    Chay exe: thu muc cai dat neu exe da o do, khong thi thu muc chua exe (portable).
+    Chay .py: thu muc source."""
+    if is_frozen():
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        if os.path.normcase(exe_dir) == os.path.normcase(install_dir()):
+            return install_dir()
+        return exe_dir
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def maybe_install_and_relaunch():
+    """Chi dung khi chay exe dong goi: neu exe chua o thu muc cai dat thi hoi
+    nguoi dung co cai dat khong. Cai thi copy exe + extension, dang ky protocol,
+    tao shortcut Desktop, mo lai ban da cai roi thoat ban nay. Tra ve True neu
+    da mo lai ban cai dat (caller nen thoat ngay)."""
+    if not is_frozen():
+        return False
+    installed = os.path.join(install_dir(), "YouTubeDownloader.exe")
+    current = os.path.abspath(sys.executable)
+    if os.path.normcase(current) == os.path.normcase(installed):
+        return False
+    try:
+        import ctypes as _ct
+        ans = _ct.windll.user32.MessageBoxW(
+            None,
+            "Cai dat YouTube Downloader vao thu muc:\n" + install_dir() +
+            "\n\nSau khi cai, app se tu dang ky protocol ytdl://, copy extension " +
+            "va tai FFmpeg khi can.\n\nChon No de chay portable tu cho hien tai (khong cai dat).",
+            "Cai dat YouTube Downloader", 0x24)
+    except Exception:
+        return False
+    if ans != 6:  # IDYES = 6
+        return False
+    try:
+        os.makedirs(install_dir(), exist_ok=True)
+        shutil.copy2(current, installed)
+        copy_bundled_extension()
+        register_protocol(installed)
+        create_desktop_shortcut(installed)
+    except Exception:
+        return False
+    try:
+        subprocess.Popen([installed] + sys.argv[1:],
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        return False
+    return True
+
+
+def bundled_extension_dir():
+    return resource_path("extension")
+
+
+def installed_extension_dir():
+    # Chay .py: extension goc da la thu muc cai dat (khong copy trung lap).
+    # Chay exe: extension nam trong thu muc cai dat.
+    if is_frozen():
+        return os.path.join(data_dir(), "extension")
+    return bundled_extension_dir()
+
+
+def extension_manifest_version(folder):
+    try:
+        with open(os.path.join(folder, "manifest.json"), "r", encoding="utf-8") as f:
+            return json.load(f).get("version", "")
+    except Exception:
+        return ""
+
+
+def copy_bundled_extension():
+    """Copy extension dong kem trong exe (hoac source) ra thu muc cai dat, ghi de.
+    Tra ve version cua extension sau khi copy, '' neu that bai."""
+    src = bundled_extension_dir()
+    dst = installed_extension_dir()
+    try:
+        os.makedirs(dst, exist_ok=True)
+        for name in os.listdir(src):
+            s = os.path.join(src, name)
+            d = os.path.join(dst, name)
+            if os.path.isfile(s) and os.path.normcase(os.path.abspath(s)) != os.path.normcase(os.path.abspath(d)):
+                shutil.copy2(s, d)
+        return extension_manifest_version(dst)
+    except Exception:
+        return ""
+
+
+def register_protocol(exe_path):
+    """Dang ky ytdl:// -> exe_path (HKCU, khong can admin). Tra ve True/False."""
+    if not _HAS_WINREG:
+        return False
+    try:
+        base = r"Software\Classes\ytdl"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base) as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "URL:YouTube Downloader Protocol")
+            winreg.SetValueEx(k, "URL Protocol", 0, winreg.REG_SZ, "")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base + r"\shell\open\command") as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, f'"{exe_path}" "%1"')
+        return True
+    except Exception:
+        return False
+
+
+def protocol_target():
+    """Exe hien dang duoc dang ky cho ytdl://, '' neu chua dang ky / doc loi."""
+    if not _HAS_WINREG:
+        return ""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\ytdl\shell\open\command") as k:
+            return winreg.QueryValueEx(k, "")[0]
+    except Exception:
+        return ""
+
+
+def create_desktop_shortcut(exe_path):
+    """Tao shortcut Desktop (best effort, loi thi bo qua)."""
+    try:
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        link = os.path.join(desktop, "YouTube Downloader.lnk")
+        if os.path.exists(link):
+            return True
+        ps = (
+            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%s');"
+            "$s.TargetPath='%s';$s.WorkingDirectory='%s';$s.Save()"
+            % (link.replace("'", "''"), exe_path.replace("'", "''"),
+               os.path.dirname(exe_path).replace("'", "''"))
+        )
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                       timeout=20)
+        return os.path.exists(link)
+    except Exception:
+        return False
+
+
+def parse_version(text):
+    if not isinstance(text, str):
+        return None
+    cleaned = text.strip().lstrip("vV")
+    if not cleaned:
+        return None
+    parts = []
+    for chunk in cleaned.split("."):
+        digits = ""
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            return None
+        parts.append(int(digits))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+def is_newer(latest, current):
+    a, b = parse_version(latest), parse_version(current)
+    return bool(a and b and a > b)
+
+
+def fetch_latest_release(timeout=8):
+    """(release_dict|None, reason) - reason: ok/not-found/rate-limited/offline/error."""
+    req = urllib.request.Request(RELEASES_API, headers={
+        "User-Agent": "YouTubeDownloader-update-check",
+        "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None, "not-found"
+        if e.code in (403, 429):
+            return None, "rate-limited"
+        return None, "error"
+    except Exception:
+        return None, "offline"
+    if not isinstance(payload, dict):
+        return None, "error"
+    return {"tag": payload.get("tag_name") or "",
+            "url": payload.get("html_url") or "",
+            "notes": payload.get("body") or "",
+            "assets": [{"name": a.get("name") or "",
+                        "url": a.get("browser_download_url") or "",
+                        "size": a.get("size") or 0}
+                       for a in (payload.get("assets") or []) if isinstance(a, dict)]}, "ok"
+
+
+def pick_update_asset(release):
+    if not isinstance(release, dict):
+        return None
+    fallback = None
+    for a in release.get("assets") or []:
+        url = a.get("url") or ""
+        name = (a.get("name") or "").lower()
+        if name == UPDATE_ASSET_NAME.lower():
+            return url
+        if fallback is None and name.endswith(".exe"):
+            fallback = url
+    return fallback
+
+
+def download_asset(url, destination, progress=None):
+    """Tai file ve destination (qua file .part), tra ve path hoac None neu loi."""
+    if not url:
+        return None
+    destination = os.fspath(destination)
+    partial = destination + ".part"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "YouTubeDownloader-update-check"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            with open(partial, "wb") as f:
+                while True:
+                    chunk = resp.read(1024 * 256)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    done += len(chunk)
+                    if progress:
+                        try:
+                            progress(done, total)
+                        except Exception:
+                            pass
+    except Exception:
+        try:
+            os.remove(partial)
+        except Exception:
+            pass
+        return None
+    try:
+        if os.path.getsize(partial) <= 0:
+            os.remove(partial)
+            return None
+        os.replace(partial, destination)
+    except Exception:
+        return None
+    return destination
+
+
+_UPDATE_SCRIPT = r"""@echo off
+setlocal
+set "OLD={old}"
+set "NEW={new}"
+set /a tries=0
+:retry
+set /a tries+=1
+move /y "%NEW%" "%OLD%" >nul 2>&1
+if not errorlevel 1 goto swapped
+if %tries% GEQ 120 goto failed
+ping -n 2 127.0.0.1 >nul
+goto retry
+:failed
+start "" "%OLD%"
+del "%~f0" >nul 2>&1
+exit /b 1
+:swapped
+del "%NEW%" >nul 2>&1
+start "" "%OLD%"
+del "%~f0" >nul 2>&1
+exit /b 0
+"""
+
+
+def apply_update(new_exe, current_exe):
+    """Viet file .bat doi exe cu bang exe moi sau khi app thoat, roi chay no.
+    Tra ve duong dan file .bat hoac None. Caller phai thoat app ngay sau do."""
+    try:
+        helper = os.path.join(tempfile.gettempdir(), "ytdl_update.bat")
+        with open(helper, "w", encoding="utf-8", newline="\r\n") as f:
+            f.write(_UPDATE_SCRIPT.format(old=os.path.abspath(current_exe),
+                                          new=os.path.abspath(new_exe)))
+        flags = 0
+        for n in ("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"):
+            flags |= getattr(subprocess, n, 0)
+        subprocess.Popen(["cmd", "/c", helper], creationflags=flags,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True)
+        return helper
+    except Exception:
+        return None
+
 
 # ==========================================
 # FFMPEG: TU TAI / TU CAP NHAT (Gyan.dev Essentials, ~119 MB, 1 lan duy nhat)
@@ -252,13 +575,13 @@ class ModernButton(tk.Canvas):
 class YouTubeDownloaderApp:
     def __init__(self, root, initial_url=""):
         self.root = root
-        self.root.title("YouTube Downloader 2.1")
-        self.app_dir = os.path.dirname(os.path.abspath(__file__))
+        self.root.title("YouTube Downloader " + VERSION)
+        self.app_dir = data_dir()
         self.ffmpeg_busy = False
         
         # --- THÊM ICON TẠI ĐÂY ---
         try:
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon_Youtube.ico")
+            icon_path = resource_path("icon_Youtube.ico")
             self.root.iconbitmap(icon_path)
         except Exception:
             pass # Bỏ qua nếu không tìm thấy file icon để tránh crash app
@@ -283,7 +606,7 @@ class YouTubeDownloaderApp:
         style.theme_use('vista') # Giao diện native của hệ điều hành
         
         # Đọc cấu hình
-        self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        self.config_file = os.path.join(self.app_dir, "config.json")
         default_dir = os.path.join(os.path.expanduser("~"), "Downloads", "Video")
         self.recent_dirs = [default_dir]
         if os.path.exists(self.config_file):
@@ -309,6 +632,9 @@ class YouTubeDownloaderApp:
         # Nut cap nhat FFmpeg: tai lai ban moi nhat tu Gyan.dev (khi nao can thi bam)
         self.ffmpeg_btn = ModernButton(header_frame, text="🎬", bg="#6C757D", hover_bg="#5A6268", command=self.ffmpeg_update_thread, width=3)
         self.ffmpeg_btn.pack(side=tk.LEFT, padx=(6, 0), ipady=2)
+        # Nut cai extension: copy extension ra thu muc cai dat + mo trang chrome://extensions
+        self.ext_btn = ModernButton(header_frame, text="🧩", bg="#6C757D", hover_bg="#5A6268", command=self.install_extension_guide, width=3)
+        self.ext_btn.pack(side=tk.LEFT, padx=(6, 0), ipady=2)
 
         # Khung Link
         tk.Label(root, text="Đường dẫn Video / Playlist:", font=("Segoe UI", 9, "bold"), bg=self.bg_color, fg="#1A1A1A").pack(anchor="w", padx=35)
@@ -379,6 +705,8 @@ class YouTubeDownloaderApp:
 
         # Tu kiem tra FFmpeg sau khi mo app: thieu/hong thi tu tai (~119 MB, 1 lan)
         self.root.after(500, self.ffmpeg_startup_check)
+        # Extension trong exe moi hon ban da copy thi copy de + nhac reload tren Chrome
+        self.root.after(1000, self.sync_extension_on_startup)
 
     # --- FFMPEG: tu tai khi mo app / bam nut 🎬 / truoc khi tai video ---
     def ffmpeg_startup_check(self):
@@ -620,8 +948,8 @@ class YouTubeDownloaderApp:
         save_path = self.save_dir.get()
         os.makedirs(save_path, exist_ok=True)
 
-        # Tự động lấy thư mục gốc chứa Tool để tìm chính xác ffmpeg.exe
-        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # Thu muc chua FFmpeg: thu muc cai dat (exe) hoac thu muc source (.py)
+        current_dir = self.app_dir
         
         is_playlist = self.is_playlist_var.get()
         
@@ -724,13 +1052,63 @@ class YouTubeDownloaderApp:
         top.focus_set()
         top.grab_set()
 
+    # --- EXTENSION: copy + huong dan cai (Chrome khong cho app tu cai len) ---
+    def sync_extension_on_startup(self):
+        try:
+            bundled_ver = extension_manifest_version(bundled_extension_dir())
+            installed_ver = extension_manifest_version(installed_extension_dir())
+            if bundled_ver and bundled_ver != installed_ver:
+                copy_bundled_extension()
+                self.status_label.config(
+                    text=f"Extension đã cập nhật lên {bundled_ver}. Hãy bấm Reload extension trên chrome://extensions (hoặc khởi động lại Chrome).",
+                    fg="#D83B01")
+        except Exception:
+            pass
+
+    def install_extension_guide(self):
+        ext_dir = installed_extension_dir()
+        copy_bundled_extension()
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(ext_dir)
+        except Exception:
+            pass
+        top = tk.Toplevel(self.root)
+        top.title("Cài Extension")
+        top.geometry("520x300")
+        top.resizable(False, False)
+        top.configure(bg=self.bg_color)
+        tk.Label(top, text="CÀI EXTENSION - CHỈ CÒN 1 BƯỚC TAY",
+                 font=("Segoe UI", 12, "bold"), bg=self.bg_color, fg="#1A1A1A").pack(pady=(15, 5))
+        tk.Label(top, text="Chrome không cho app tự cài extension lén, nên app đã copy sẵn\nextension vào thư mục dưới đây. Bạn chỉ cần làm 3 bước sau:",
+                 font=("Segoe UI", 10), bg=self.bg_color, fg="#1A1A1A", justify=tk.LEFT).pack(pady=5, padx=20, anchor="w")
+        tk.Label(top, text=f"Thư mục extension (đã copy vào clipboard):\n{ext_dir}",
+                 font=("Segoe UI", 9), bg=self.bg_color, fg="#005FB8", justify=tk.LEFT).pack(pady=5, padx=20, anchor="w")
+        tk.Label(top, text="1. Bấm nút Mở trang Extensions dưới đây\n2. Bật Developer mode (góc phải trên)\n3. Bấm Load unpacked rồi chọn đúng thư mục trên",
+                 font=("Segoe UI", 10), bg=self.bg_color, fg="#1A1A1A", justify=tk.LEFT).pack(pady=5, padx=20, anchor="w")
+        btns = tk.Frame(top, bg=self.bg_color)
+        btns.pack(pady=10)
+        ModernButton(btns, text="Mở trang Extensions", bg="#005FB8", hover_bg="#004C93",
+                     command=lambda: webbrowser.open("chrome://extensions"), width=20).pack(side=tk.LEFT, padx=5, ipady=3)
+        ModernButton(btns, text="Đóng", bg="#6C757D", hover_bg="#5A6268",
+                     command=top.destroy, width=10).pack(side=tk.LEFT, padx=5, ipady=3)
+        top.focus_set()
+
+    # --- TU CAP NHAT APP + EXTENSION qua GitHub Releases ---
     def update_core_thread(self):
-        self.status_label.config(text="Đang tải bản cập nhật yt-dlp... Vui lòng chờ.", fg="#D83B01")
-        self.update_btn.set_state(tk.DISABLED)
-        threading.Thread(target=self.run_update, daemon=True).start()
+        # Nut cap nhat chinh: exe thi kiem tra ban moi tren GitHub Releases
+        # (app + extension + yt-dlp dong kem deu duoc cap nhat theo exe moi);
+        # chay .py thi chi cap nhat duoc yt-dlp qua pip nhu cu.
+        if is_frozen():
+            self.status_label.config(text="Đang kiểm tra bản mới trên GitHub...", fg="#D83B01")
+            self.update_btn.set_state(tk.DISABLED)
+            threading.Thread(target=self.run_app_update_check, daemon=True).start()
+        else:
+            self.status_label.config(text="Đang tải bản cập nhật yt-dlp... Vui lòng chờ.", fg="#D83B01")
+            self.update_btn.set_state(tk.DISABLED)
+            threading.Thread(target=self.run_update, daemon=True).start()
 
     def run_update(self):
-        import subprocess
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], creationflags=subprocess.CREATE_NO_WINDOW)
             self.root.after(0, self.status_label.config, {"text": "Cập nhật yt-dlp thành công! Khởi động lại app để dùng bản mới.", "fg": "#107C10"})
@@ -739,7 +1117,72 @@ class YouTubeDownloaderApp:
         finally:
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
 
+    def run_app_update_check(self):
+        release, reason = fetch_latest_release()
+        if not release:
+            msg = {"offline": "Không có mạng, không kiểm tra được bản mới.",
+                   "rate-limited": "GitHub giới hạn lượt gọi, hãy thử lại sau.",
+                   "not-found": "Chưa có release nào trên GitHub.",
+                   "error": "Không đọc được thông tin release trên GitHub."}.get(reason, "Không kiểm tra được bản mới.")
+            self.root.after(0, self.status_label.config, {"text": msg, "fg": "#C42B1C"})
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            return
+        if not is_newer(release.get("tag", ""), VERSION):
+            self.root.after(0, self.status_label.config, {"text": f"Đã là bản mới nhất ({VERSION}).", "fg": "#107C10"})
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            return
+        self.root.after(0, self.prompt_app_update, release)
+
+    def prompt_app_update(self, release):
+        tag = release.get("tag", "")
+        notes = (release.get("notes") or "")[:300]
+        if not messagebox.askyesno("Có bản mới", f"Có bản {tag} (bạn đang dùng {VERSION}).\n\n{notes}\n\nTải và cài đặt ngay? App sẽ tự mở lại bản mới, extension cũng được cập nhật theo (nhớ bấm Reload extension trên chrome://extensions)."):
+            self.status_label.config(text="Đã hủy cập nhật.", fg="#666666")
+            self.update_btn.set_state(tk.NORMAL)
+            return
+        self.status_label.config(text=f"Đang tải bản {tag}...", fg="#D83B01")
+        threading.Thread(target=self.run_app_update_download, args=(release,), daemon=True).start()
+
+    def run_app_update_download(self, release):
+        url = pick_update_asset(release)
+        if not url:
+            self.root.after(0, messagebox.showerror, "Lỗi", "Release mới không có file YouTubeDownloader.exe để tải.")
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            return
+        new_exe = os.path.join(tempfile.gettempdir(), "YouTubeDownloader-new.exe")
+        def _prog(done, total):
+            if total > 0:
+                pct = int(done * 100 / total)
+                self.root.after(0, self.update_progress, pct)
+                self.root.after(0, self.status_label.config, {"text": f"Đang tải bản mới... {pct}% ({done // 1048576} / {total // 1048576} MB)", "fg": "#D83B01"})
+        got = download_asset(url, new_exe, progress=_prog)
+        if not got or os.path.getsize(got) < 1_000_000:
+            self.root.after(0, messagebox.showerror, "Lỗi", "Tải bản mới thất bại (file lỗi / mạng ngắt). Hãy thử lại.")
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            return
+        current_exe = os.path.abspath(sys.executable)
+        if not apply_update(got, current_exe):
+            self.root.after(0, messagebox.showerror, "Lỗi", "Không khởi động được trình cập nhật. Hãy tải tay file exe ở trang Releases.")
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            return
+        # File .bat se doi exe sau khi app thoat roi mo lai ban moi
+        self.root.after(0, self.root.destroy)
+
 if __name__ == "__main__":
+    if "--version" in sys.argv or "-v" in sys.argv:
+        print(VERSION)
+        sys.exit(0)
+    # Exe lan dau chay o cho khac: hoi cai dat, cai xong thi mo lai ban da cai
+    if maybe_install_and_relaunch():
+        sys.exit(0)
+    # Exe da cai: tu sua lai protocol neu registry tro sai cho (best effort)
+    if is_frozen():
+        try:
+            _inst = os.path.join(install_dir(), "YouTubeDownloader.exe")
+            if os.path.normcase(os.path.abspath(sys.executable)) == os.path.normcase(_inst):
+                register_protocol(_inst)
+        except Exception:
+            pass
     init_url = parse_launch_url(sys.argv[1]) if len(sys.argv) > 1 else ""
     root = tk.Tk()
     app = YouTubeDownloaderApp(root, init_url)

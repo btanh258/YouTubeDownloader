@@ -1,55 +1,36 @@
-# YouTube Downloader 2.1
+# YouTube Downloader 2.2
 
 Tải video / playlist YouTube bằng yt-dlp, giao diện Tkinter. Bấm nút
 **TẢI VIDEO** ngay trên trang YouTube, app tự mở lên với link đã điền sẵn.
 
-## Luồng hoạt động
+**Bản 2.2 là bản 1 file exe duy nhất.** Tải `YouTubeDownloader.exe` ở trang
+Releases về, chạy là xong, không cần cài Python, không cần copy thêm file gì.
 
-```
-YouTube (extension/content.js)  -- bấm TẢI VIDEO -->
-  ytdl://https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D...
-    -- Windows (registry HKCU\Software\Classes\ytdl) -->
-      pyw.exe app\youtube_gui.py "ytdl://..."
-        -- youtube_gui.py bóc link, lấy thông tin, tải bằng yt-dlp + FFmpeg -->
-```
+## Cài đặt lần đầu (chỉ làm 1 lần)
 
-Không dùng Native Messaging nên không cần `host.py`, `manifest_native.json`,
-file `.crx`/`.pem` hay quyền `nativeMessaging` nữa. Extension chỉ còn
-`content.js` + `manifest.json`, ID thay đổi mỗi máy cũng chạy được.
+1. Tải `YouTubeDownloader.exe` ở
+   [Releases](https://github.com/btanh258/YouTubeDownloader/releases) về,
+   chạy file exe đó.
+2. App hỏi có cài đặt không, bấm **Yes**. App sẽ tự:
+   - Copy chính nó vào `%LOCALAPPDATA%\YouTubeDownloader\YouTubeDownloader.exe`
+     (và tạo shortcut trên Desktop), rồi mở lại bản đã cài.
+   - Đăng ký protocol `ytdl://` trỏ tới bản đã cài (không cần quyền admin).
+   - Copy extension vào `%LOCALAPPDATA%\YouTubeDownloader\extension`.
+   - Tải FFmpeg lần đầu (khoảng 119 MB, chỉ 1 lần) khi cần.
+3. Cài extension: trong app bấm nút 🧩 **Cài Extension**. App đã copy sẵn
+   thư mục extension, chỉ còn 3 bước tay: mở trang `chrome://extensions`,
+   bật Developer mode, bấm Load unpacked rồi chọn đúng thư mục đó.
 
-## FFmpeg tự tải / tự cập nhật
+> **Vì sao extension vẫn cần 1 bước tay?** Chrome không cho app tự cài
+> extension lén trên máy cá nhân. Cách duy nhất để Chrome tự cài + tự cập
+> nhật extension là đăng extension lên Chrome Web Store rồi ép cài qua
+> chính sách (ExtensionInstallForcelist) — trên máy không quản lý bởi tổ
+> chức, Chrome cũng bỏ qua chính sách nếu update URL không phải Web Store.
+> Nên bản này làm tới mức tối đa có thể tự động: copy sẵn extension, mở
+> sẵn trang Extensions, copy sẵn đường dẫn vào clipboard.
 
-- **Lần đầu mở app:** nếu thiếu `ffmpeg.exe` / `ffprobe.exe` (hoặc file bị
-  hỏng, nhỏ bất thường, chạy `--version` lỗi), app tự tải bản Essentials
-  mới nhất từ [Gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
-  (`ffmpeg-release-essentials.zip`, khoảng 119 MB, chỉ 1 lần), chỉ giải nén
-  `bin/ffmpeg.exe` + `bin/ffprobe.exe` vào thư mục `app`, kiểm tra chạy được
-  mới thay file cũ, file zip tạm luôn được xóa. Có sẵn 2 file này thì app
-  dùng luôn, không tải lại.
-- **Trước khi tải video:** app kiểm tra lại FFmpeg rồi mới cho yt-dlp tải,
-  tránh trường hợp tải xong cả video mới báo lỗi ở bước gộp video + audio.
-- **Cập nhật tay:** bấm nút 🎬 trên header để tải lại bản FFmpeg mới nhất.
-- **Cập nhật yt-dlp:** bấm nút 🔄, xong khởi động lại app để dùng bản mới.
-
-## Cài đặt (làm 1 lần)
-
-**Yêu cầu:** Python 3.11+ cài từ python.org (kèm Python Launcher `pyw.exe`),
-có mạng.
-
-**Bước 1 — Đăng ký protocol:** chạy `register_protocol.bat`.
-File này tìm `pyw.exe`, cài `yt-dlp` nếu thiếu, rồi ghi 1 khóa registry
-`HKCU\Software\Classes\ytdl` trỏ tới `pyw.exe app\youtube_gui.py`.
-Không cần quyền admin. Dời thư mục tool sang chỗ khác thì chạy lại file này.
-
-**Bước 2 — Nạp extension:** mở `chrome://extensions`, bật **Developer mode**,
-chọn **Load unpacked**, chọn thư mục `extension`. Làm tương tự trên Edge
-(`edge://extensions`) — protocol là của Windows nên dùng chung được cho cả
-2 trình duyệt.
-
-**Bước 3 — Dùng:** mở video / Shorts / livestream YouTube, bấm nút
-**TẢI VIDEO**. Lần đầu Chrome hỏi thì tick **Always allow** rồi bấm **Open**.
-App mở lên, tự điền link (mở tay thì app tự dán link YouTube trong
-clipboard) và tự lấy thông tin.
+Sau này mở video YouTube, bấm **TẢI VIDEO**, lần đầu Chrome hỏi thì tick
+**Always allow** rồi bấm **Open**.
 
 Thử nhanh không cần mở YouTube: bấm `Win+R`, dán rồi Enter:
 
@@ -57,10 +38,56 @@ Thử nhanh không cần mở YouTube: bấm `Win+R`, dán rồi Enter:
 ytdl://https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ
 ```
 
+## Tự cập nhật (bấm nút 🔄 trong app)
+
+- **App:** nút 🔄 kiểm tra GitHub Releases. Có bản mới thì hỏi, đồng ý là
+  app tải `YouTubeDownloader.exe` mới về, tự thay file exe cũ và mở lại
+  bản mới (dùng file `.bat` trung gian vì Windows không cho ghi đè file exe
+  đang chạy). Bản mới kèm yt-dlp mới và extension mới.
+- **Extension:** exe mới khi mở lên sẽ copy đè extension mới vào thư mục cài
+  đặt, rồi nhắc bạn bấm **Reload** extension trên `chrome://extensions`
+  (hoặc khởi động lại Chrome). Chrome không tự cập nhật extension nạp tay,
+  nên đây là bước duy nhất còn phải bấm tay khi cập nhật extension.
+- **FFmpeg:** bấm nút 🎬 để tải lại bản FFmpeg mới nhất từ Gyan.dev.
+- **yt-dlp (bản chạy .py):** khi chạy từ source thì nút 🔄 chỉ cập nhật
+  yt-dlp qua pip như cũ, xong khởi động lại app.
+
+## FFmpeg tự tải
+
+- **Lần đầu mở app:** nếu thiếu `ffmpeg.exe` / `ffprobe.exe` (hoặc file bị
+  hỏng, nhỏ bất thường, chạy `--version` lỗi), app tự tải bản Essentials
+  mới nhất từ [Gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
+  (`ffmpeg-release-essentials.zip`, khoảng 119 MB, chỉ 1 lần), chỉ giải nén
+  `bin/ffmpeg.exe` + `bin/ffprobe.exe` vào thư mục cài đặt, kiểm tra chạy
+  được mới thay file cũ, file zip tạm luôn được xóa. Có sẵn 2 file này thì
+  app dùng luôn, không tải lại.
+- **Trước khi tải video:** app kiểm tra lại FFmpeg rồi mới cho yt-dlp tải,
+  tránh trường hợp tải xong cả video mới báo lỗi ở bước gộp video + audio.
+
+## Luồng hoạt động
+
+```
+YouTube (extension/content.js)  -- bấm TẢI VIDEO -->
+  ytdl://https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D...
+    -- Windows (registry HKCU\Software\Classes\ytdl) -->
+      YouTubeDownloader.exe "ytdl://..."
+        -- app bóc link, lấy thông tin, tải bằng yt-dlp + FFmpeg -->
+```
+
+## Chạy từ source (cho dev)
+
+Yêu cầu Python 3.11+ và `pip install yt-dlp`. Chạy `app/youtube_gui.py`,
+rồi chạy `register_protocol.bat` để đăng ký `ytdl://` trỏ tới Python.
+Build exe trên Windows: chạy `Build_YouTubeDownloader.bat`
+(PyInstaller theo `YouTubeDownloader.spec`).
+
 ## Cấu trúc
 
 ```
-register_protocol.bat      Đăng ký ytdl:// (chạy 1 lần, không cần admin)
+YouTubeDownloader.spec     PyInstaller: 1 file exe, kem extension + icon
+Build_YouTubeDownloader.bat  Build exe tren Windows
+.github/workflows/build.yml GitHub Actions: build exe khi push tag vX.Y.Z
+register_protocol.bat      Đăng ký ytdl:// (exe uu tien, khong thi .py)
 unregister_protocol.bat    Gỡ đăng ký ytdl://
 README.md                  File này
 app/
@@ -74,26 +101,24 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
-## Sửa lỗi trong 2.1 (so với 2.0)
+## Thay đổi trong 2.2 (so với 2.1)
 
-- **FFmpeg:** tự tải khi thiếu/hỏng, kiểm tra trước khi tải video, nút 🎬
-  cập nhật tay. Trước đây thiếu FFmpeg thì yt-dlp tải xong mới lỗi ở bước gộp.
-- **Lấy thông tin playlist:** trước đây luôn dùng `noplaylist=True` nên lấy
-  nhầm tiêu đề video đơn; nay tick Playlist thì quét nhẹ playlist, hiện tên
-  playlist + số video.
-- **Báo thành công giả:** trước đây `ignoreerrors=True` nên tải lỗi hết vẫn
-  hiện popup "ĐÃ TẢI XONG"; nay chỉ báo thành công khi file thật sự tồn tại.
-- **Lỗi lấy thông tin:** trước đây `info=None` làm crash và chỉ hiện thông
-  báo chung chung; nay hiện đúng lý do yt-dlp trả về.
-- **Tải khi chưa lấy thông tin:** nay chặn và nhắc dán link / bấm Lấy thông
-  tin trước, thay vì chạy với lựa chọn trống.
-- **Tự di chuột:** bỏ trò tự di con trỏ tới nút Tải xuống / nút Đóng (gây khó
-  chịu, giật chuột khi đang làm việc khác).
-- **Cập nhật yt-dlp:** nay báo rõ phải khởi động lại app mới dùng bản mới.
-- **Shorts / live:** nút TẢI VIDEO giờ hiện cả trên Shorts và livestream,
-  trước đây chỉ có trang xem thường.
-- **Cấu hình:** ghi thư mục gần đây không còn làm mất các khóa khác trong
-  `config.json` (vd phiên bản FFmpeg).
+- **1 file exe:** PyInstaller onefile, kèm extension + icon bên trong.
+  Lần đầu chạy exe hỏi cài đặt: tự copy vào `%LOCALAPPDATA%`,
+  tự đăng ký protocol, tự copy extension, tạo shortcut Desktop.
+- **Tự cập nhật app:** nút 🔄 kiểm tra Releases, tải exe mới, tự thay file
+  và mở lại. Trước đây nút này chỉ cập nhật yt-dlp qua pip (không có tác
+  dụng với bản exe vì yt-dlp đã đóng gói bên trong).
+- **Tự cập nhật extension:** exe mới copy đè extension mới, nhắc Reload
+  trên `chrome://extensions`. Trước đây extension nạp tay không có đường
+  nào cập nhật.
+- **Nút Cài Extension 🧩:** copy extension + mở trang Extensions + copy
+  đường dẫn vào clipboard, kèm hướng dẫn 3 bước trong app.
+- **Sửa lỗi đóng gói:** `ffmpeg_location` và thư mục config trước đây dùng
+  `__file__` (khi đóng gói sẽ trỏ vào thư mục tạm `_MEIPASS` rồi mất);
+  nay dùng thư mục cài đặt / thư mục chứa exe.
+- **Kiểm tra nhanh:** `YouTubeDownloader.exe --version` in ra phiên bản,
+  để GitHub Actions kiểm chứng sau khi build.
 
 ## Đề xuất chưa làm (để lần sau)
 
@@ -103,9 +128,9 @@ extension/
 - **Video giới hạn độ tuổi / cần đăng nhập:** yt-dlp sẽ lỗi nếu video yêu
   cầu đăng nhập. Hướng sửa: thêm tùy chọn lấy cookies từ Chrome
   (`--cookies-from-browser`), hiện đang comment sẵn trong code.
-- **Đóng gói exe:** build bằng PyInstaller (như AutoClickTool, dùng GitHub
-  Actions) để máy không cài Python vẫn chạy được; khi đó chỉ cần sửa 1 dòng
-  trong `register_protocol.bat` cho protocol trỏ tới file exe thay vì `pyw.exe`.
+- **Chrome Web Store:** nếu đăng extension lên Web Store thì mới ép cài +
+  tự cập nhật extension hoàn toàn tự động được (cần tài khoản dev, phí
+  đăng ký 1 lần, chờ duyệt).
 - **Tiến trình gộp file:** lúc FFmpeg gộp video + audio thì thanh tiến trình
   đứng ở 100% vì yt-dlp không báo tiến độ bước này; có thể hiện trạng thái
   "Đang gộp..." cho rõ.
