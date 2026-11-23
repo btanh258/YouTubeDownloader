@@ -48,7 +48,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.2.3"
+VERSION = "2.2.4"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -160,6 +160,19 @@ def maybe_install_and_relaunch():
         register_protocol(installed)
         create_desktop_shortcut(installed)
     except Exception:
+        return False
+    # Ban cai ma khong chay duoc (loi DLL) thi khong mo no, bao loi de nguoi
+    # dung biet ma xu ly chu khong im lang mo ban hong
+    ok, _v = verify_exe(installed, VERSION)
+    if not ok:
+        try:
+            import ctypes as _ct2
+            _ct2.windll.user32.MessageBoxW(
+                None,
+                "Bản vừa cài không chạy được trên máy này (lỗi DLL khi khởi động).\n\nHãy thử: xóa thư mục %TEMP%\\_MEI*, kiểm tra Windows Security → Protection history xem python311.dll có bị cách ly không, rồi chạy lại file exe.",
+                "Cài đặt thất bại", 0x10)
+        except Exception:
+            pass
         return False
     try:
         subprocess.Popen([installed] + sys.argv[1:],
@@ -386,6 +399,20 @@ def pick_update_asset(release):
         if fallback is None and name.endswith(".exe"):
             fallback = a
     return fallback
+
+
+def verify_exe(exe_path, expect_version=None):
+    """Kiem tra file exe co chay duoc khong bang cach chay 'exe --version'.
+    Tra ve (True, version) neu chay duoc va (neu co expect_version) khop,
+    (False, '') neu khong chay duoc - vd loi 'Failed to load Python DLL'.
+    Dung de kiem tra exe moi TAI VE truoc khi thay exe cu: exe moi ma khong
+    chay duoc thi huy cap nhat chu khong thay exe tot bang exe hong."""
+    ver = _exe_version(exe_path)
+    if not ver:
+        return False, ""
+    if expect_version and parse_version(ver) != parse_version(expect_version):
+        return False, ver
+    return True, ver
 
 
 def file_sha256(path):
@@ -1278,14 +1305,32 @@ class YouTubeDownloaderApp:
                     pass
                 messagebox.showinfo("Gỡ cài đặt", "Đã gỡ đăng ký protocol ytdl://.")
             return
+        exe_path = os.path.abspath(sys.executable)
+        exe_dir = os.path.dirname(exe_path)
+        is_installed = os.path.normcase(exe_dir) == os.path.normcase(install_dir())
+        if is_installed:
+            what = "Thư mục cài đặt (exe, FFmpeg, extension, config, log)"
+            cleanup = 'rmdir /s /q "%DIR%" >nul 2>&1\r\n'
+        else:
+            # Portable: exe dang o thu muc chung (vd Downloads) nen CHI duoc xoa
+            # dung file exe + cac file cua app trong thu muc do, tuyet doi khong
+            # xoa ca thu muc (se xoa nham file cua nguoi dung)
+            what = f"File exe đang chạy ({exe_path}) và các file của app bên cạnh nó (FFmpeg, extension, config, log)"
+            cleanup = ('del "%DIR%\\config.json" >nul 2>&1\r\n'
+                       'del "%DIR%\\ffmpeg.exe" >nul 2>&1\r\n'
+                       'del "%DIR%\\ffprobe.exe" >nul 2>&1\r\n'
+                       'del "%DIR%\\ffplay.exe" >nul 2>&1\r\n'
+                       'del "%DIR%\\.ffmpeg-download.zip" >nul 2>&1\r\n'
+                       'del "%DIR%\\YouTubeDownloader.log" >nul 2>&1\r\n'
+                       'del "%DIR%\\YouTubeDownloader.portable" >nul 2>&1\r\n'
+                       'rmdir /s /q "%DIR%\\extension" >nul 2>&1\r\n')
         if not messagebox.askyesno("Gỡ cài đặt",
-                "Gỡ sạch YouTube Downloader khỏi máy?\n\nSẽ xóa:\n- Thư mục cài đặt (exe, FFmpeg, extension, config, log)\n- Đăng ký protocol ytdl://\n- Shortcut trên Desktop\n\nVideo đã tải sẽ KHÔNG bị xóa.\n\nLưu ý: extension trên Chrome sẽ báo lỗi vì thư mục đã bị xóa,\nbạn bấm Remove trên chrome://extensions để gỡ nốt."):
+                "Gỡ sạch YouTube Downloader khỏi máy?\n\nSẽ xóa:\n- " + what + "\n- Đăng ký protocol ytdl://\n- Shortcut trên Desktop\n\nVideo đã tải sẽ KHÔNG bị xóa.\n\nLưu ý: extension trên Chrome sẽ báo lỗi vì thư mục đã bị xóa,\nbạn bấm Remove trên chrome://extensions để gỡ nốt."):
             return
-        inst = install_dir()
         bat = os.path.join(tempfile.gettempdir(), "ytdl_uninstall.bat")
         script = ("@echo off\r\nsetlocal\r\n"
-                  f'set "DIR={inst}"\r\n'
-                  f'set "EXE={os.path.join(inst, "YouTubeDownloader.exe")}"\r\n'
+                  f'set "DIR={exe_dir}"\r\n'
+                  f'set "EXE={exe_path}"\r\n'
                   "set /a tries=0\r\n:retry\r\nset /a tries+=1\r\n"
                   'del "%EXE%" >nul 2>&1\r\n'
                   'if exist "%EXE%" (\r\n'
@@ -1294,7 +1339,7 @@ class YouTubeDownloaderApp:
                   ":cleanup\r\n"
                   'reg delete "HKCU\\Software\\Classes\\ytdl" /f >nul 2>&1\r\n'
                   'del "%USERPROFILE%\\Desktop\\YouTube Downloader.lnk" >nul 2>&1\r\n'
-                  'rmdir /s /q "%DIR%" >nul 2>&1\r\n'
+                  + cleanup +
                   '(goto) 2>nul & del "%~f0"\r\n')
         try:
             with open(bat, "w", encoding="utf-8", newline="") as f:
@@ -1433,6 +1478,18 @@ class YouTubeDownloaderApp:
             except Exception:
                 pass
             self.root.after(0, messagebox.showerror, "Lỗi", "File bản mới tải về không đầy đủ (mạng ngắt giữa chừng). Đã hủy cập nhật, bản cũ vẫn giữ nguyên. Hãy bấm cập nhật lại.")
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            return
+        # Kiem tra lan cuoi: exe moi tai ve co chay duoc tren may nay khong.
+        # Neu khong (vd loi DLL do Defender chan / thieu thu vien) thi huy
+        # cap nhat, giu nguyen exe cu dang chay tot.
+        ok, got_ver = verify_exe(got, release.get("tag", ""))
+        if not ok:
+            try:
+                os.remove(got)
+            except Exception:
+                pass
+            self.root.after(0, messagebox.showerror, "Lỗi", "File exe mới tải về không chạy được trên máy này (lỗi DLL khi khởi động). Đã hủy cập nhật, bản cũ vẫn giữ nguyên.\n\nHãy thử: xóa thư mục %TEMP%\\_MEI*, kiểm tra Windows Security → Protection history xem python311.dll có bị cách ly không, rồi cập nhật lại.")
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
         current_exe = os.path.abspath(sys.executable)

@@ -101,6 +101,27 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.2.4 (so với 2.2.3)
+
+- **Gỡ cài đặt khi chạy portable:** trước đây nút Gỡ cài đặt luôn nhắm vào
+  thư mục cài đặt, nên chạy portable (exe ở Downloads) thì bấm xong app
+  tắt mà file exe vẫn còn nguyên. Nay gỡ đúng file exe đang chạy: bản đã
+  cài thì xóa cả thư mục cài đặt, bản portable thì chỉ xóa file exe và các
+  file của app bên cạnh nó (FFmpeg, extension, config, log), không xóa cả
+  thư mục chung như Downloads.
+- **Kiểm tra exe mới chạy được trước khi thay:** khi cập nhật, app tải exe
+  mới về rồi chạy thử `exe --version` trước khi thay exe cũ. Exe mới mà
+  không chạy được (vd lỗi DLL) thì hủy cập nhật, giữ nguyên bản cũ. Tương
+  tự, lúc cài đặt, bản vừa copy vào thư mục cài đặt mà không chạy được thì
+  app báo lỗi chứ không mở bản hỏng.
+- **Chẩn đoán lỗi "Failed to load Python DLL":** lỗi này là do bootloader
+  PyInstaller không tải được `python311.dll` lúc giải nén ra `%TEMP%`,
+  thường do Defender cách ly file DLL hoặc thiếu Visual C++ Runtime.
+  Cách kiểm tra nhanh: mở cmd, chạy `YouTubeDownloader.exe --version` —
+  nếu báo lỗi DLL thì kiểm tra Windows Security → Protection history,
+  thêm thư mục cài đặt vào Exclusions, xóa thư mục `%TEMP%\_MEI*` rồi
+  chạy lại.
+
 ## Thay đổi trong 2.2.3 (so với 2.2.2)
 
 - **Không hỏi cài đặt mỗi lần mở nữa:** trước đây cứ chạy exe ở chỗ khác
