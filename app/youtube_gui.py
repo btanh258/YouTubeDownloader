@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import time
 import re
+import hashlib
 
 
 def parse_launch_url(arg):
@@ -47,7 +48,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.2.1"
+VERSION = "2.2.2"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -318,11 +319,15 @@ def fetch_latest_release(timeout=8):
             "notes": payload.get("body") or "",
             "assets": [{"name": a.get("name") or "",
                         "url": a.get("browser_download_url") or "",
-                        "size": a.get("size") or 0}
+                        "size": a.get("size") or 0,
+                        "digest": a.get("digest") or ""}
                        for a in (payload.get("assets") or []) if isinstance(a, dict)]}, "ok"
 
 
 def pick_update_asset(release):
+    """Tra ve dict asset {url, size, digest} cua file exe cap nhat, hoac None.
+    digest cua GitHub co dang 'sha256:<hex>' - dung de kiem tra file tai ve
+    co day du / nguyen ven khong truoc khi thay exe cu."""
     if not isinstance(release, dict):
         return None
     fallback = None
@@ -330,10 +335,18 @@ def pick_update_asset(release):
         url = a.get("url") or ""
         name = (a.get("name") or "").lower()
         if name == UPDATE_ASSET_NAME.lower():
-            return url
+            return a
         if fallback is None and name.endswith(".exe"):
-            fallback = url
+            fallback = a
     return fallback
+
+
+def file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def download_asset(url, destination, progress=None):
@@ -369,6 +382,12 @@ def download_asset(url, destination, progress=None):
         if os.path.getsize(partial) <= 0:
             os.remove(partial)
             return None
+        # Mang ngat giua chung: urllib doc duoc bao nhieu thi tra bay nhieu,
+        # khong bao loi. Neu Content-Length noi 22 MB ma chi tai duoc 10 MB
+        # thi file bi cut, phai huy chu khong duoc dung.
+        if total > 0 and done != total:
+            os.remove(partial)
+            return None
         os.replace(partial, destination)
     except Exception:
         return None
@@ -402,6 +421,14 @@ exit /b 0
 def apply_update(new_exe, current_exe):
     """Viet file .bat doi exe cu bang exe moi sau khi app thoat, roi chay no.
     Tra ve duong dan file .bat hoac None. Caller phai thoat app ngay sau do."""
+    if not os.path.isfile(new_exe):
+        return None
+    # Sao luu exe cu: neu exe moi bi loi (vd Failed to load Python DLL),
+    # nguoi dung doi ten file .bak lai la co ban cu chay duoc.
+    try:
+        shutil.copy2(os.path.abspath(current_exe), os.path.abspath(current_exe) + ".bak")
+    except Exception:
+        pass
     try:
         helper = os.path.join(tempfile.gettempdir(), "ytdl_update.bat")
         with open(helper, "w", encoding="utf-8", newline="\r\n") as f:
@@ -1265,11 +1292,12 @@ class YouTubeDownloaderApp:
         threading.Thread(target=self.run_app_update_download, args=(release,), daemon=True).start()
 
     def run_app_update_download(self, release):
-        url = pick_update_asset(release)
-        if not url:
+        asset = pick_update_asset(release)
+        if not asset or not asset.get("url"):
             self.root.after(0, messagebox.showerror, "Lỗi", "Release mới không có file YouTubeDownloader.exe để tải.")
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
+        url = asset["url"]
         new_exe = os.path.join(tempfile.gettempdir(), "YouTubeDownloader-new.exe")
         def _prog(done, total):
             if total > 0:
@@ -1278,7 +1306,28 @@ class YouTubeDownloaderApp:
                 self.root.after(0, self.status_label.config, {"text": f"Đang tải bản mới... {pct}% ({done // 1048576} / {total // 1048576} MB)", "fg": "#D83B01"})
         got = download_asset(url, new_exe, progress=_prog)
         if not got or os.path.getsize(got) < 1_000_000:
-            self.root.after(0, messagebox.showerror, "Lỗi", "Tải bản mới thất bại (file lỗi / mạng ngắt). Hãy thử lại.")
+            self.root.after(0, messagebox.showerror, "Lỗi", "Tải bản mới thất bại (file lỗi / mạng ngắt). Hãy thử lại. Bản cũ vẫn giữ nguyên.")
+            self.root.after(0, self.update_btn.set_state, tk.NORMAL)
+            return
+        # Kiem tra nguyen ven truoc khi thay exe cu: file tai ve ma thieu byte
+        # thi exe moi se loi "Failed to load Python DLL" va khong mo duoc nua.
+        expect_size = asset.get("size") or 0
+        expect_digest = (asset.get("digest") or "").removeprefix("sha256:")
+        bad = False
+        if expect_size and os.path.getsize(got) != expect_size:
+            bad = True
+        if expect_digest:
+            try:
+                if file_sha256(got) != expect_digest:
+                    bad = True
+            except Exception:
+                bad = True
+        if bad:
+            try:
+                os.remove(got)
+            except Exception:
+                pass
+            self.root.after(0, messagebox.showerror, "Lỗi", "File bản mới tải về không đầy đủ (mạng ngắt giữa chừng). Đã hủy cập nhật, bản cũ vẫn giữ nguyên. Hãy bấm cập nhật lại.")
             self.root.after(0, self.update_btn.set_state, tk.NORMAL)
             return
         current_exe = os.path.abspath(sys.executable)
@@ -1300,6 +1349,14 @@ if __name__ == "__main__":
     if is_frozen():
         try:
             register_protocol(os.path.abspath(sys.executable))
+        except Exception:
+            pass
+    # App mo len duoc nghia la ban moi chay tot: xoa ban sao luu .bak cu
+    if is_frozen():
+        try:
+            _bak = os.path.abspath(sys.executable) + ".bak"
+            if os.path.exists(_bak):
+                os.remove(_bak)
         except Exception:
             pass
     init_url = parse_launch_url(sys.argv[1]) if len(sys.argv) > 1 else ""

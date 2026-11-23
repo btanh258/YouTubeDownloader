@@ -101,6 +101,27 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.2.2 (so với 2.2.1)
+
+- **Sửa lỗi "Failed to load Python DLL" sau khi cập nhật:** nguyên nhân là
+  quá trình tải exe mới không kiểm tra độ đầy đủ — mạng ngắt giữa chừng thì
+  file exe bị cắt ngắn mà app vẫn thay exe cũ bằng file lỗi đó, nên lần mở
+  sau PyInstaller giải nén thiếu `python311.dll` và không chạy được nữa.
+  Nay trước khi thay exe, app kiểm tra cả 3 thứ: số byte tải về phải khớp
+  `Content-Length`, kích thước phải khớp asset trên Releases, và SHA-256
+  phải khớp `digest` của asset. Sai một thứ là hủy cập nhật, bản cũ giữ nguyên.
+- **Sao lưu exe cũ:** trước khi thay, app copy exe cũ thành
+  `YouTubeDownloader.exe.bak`. Nếu exe mới vẫn lỗi thì đổi tên file `.bak`
+  lại là có bản cũ chạy được. Bản mới mở lên được thì tự xóa file `.bak`.
+- **Tắt UPX khi đóng gói:** UPX làm Defender dễ chặn file DLL khi giải nén
+  ra `%TEMP%`, cũng là một nguyên nhân gây lỗi trên.
+
+  **Nếu máy bạn đang bị lỗi này:** xóa các thư mục `%TEMP%\_MEI*`, tải lại
+  `YouTubeDownloader.exe` ở trang Releases rồi chép đè vào
+  `%LOCALAPPDATA%\YouTubeDownloader\YouTubeDownloader.exe` và chạy lại.
+  Nếu vẫn lỗi, kiểm tra Windows Security → Protection history xem
+  `python311.dll` có bị cách ly không, và thêm thư mục cài đặt vào Exclusions.
+
 ## Thay đổi trong 2.2.1 (so với 2.2)
 
 - **Sửa lỗi mở trang Extensions:** trước đây nút 🧩 dùng `webbrowser.open("chrome://extensions")`
