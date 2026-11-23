@@ -48,7 +48,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.3.2"
+VERSION = "2.3.3"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -1370,15 +1370,11 @@ class YouTubeDownloaderApp:
 
     # --- EXTENSION: copy + huong dan cai (Chrome khong cho app tu cai len) ---
     def open_extensions_page_ui(self):
-        # Copy san URL trang Extensions vao clipboard: neu trinh duyet mo ra ma
-        # chua thay trang thi dan URL nay vao thanh dia chi la xong
-        _exe, _url = _find_browser_exe()
-        if _url:
-            try:
-                self.root.clipboard_clear()
-                self.root.clipboard_append(_url)
-            except Exception:
-                pass
+        # KHONG copy URL vao clipboard o day: hop thoai Cai Extension da copy
+        # duong dan thu muc extension vao clipboard de dan vao hop chon thu
+        # muc (Load unpacked); copy URL de len se lam mat duong dan do
+        # (nguoi dung dan ra duoc "edge://extensions"). URL chi nam trong
+        # thong bao du phong khi khong mo duoc trinh duyet.
         if not open_extensions_page():
             messagebox.showinfo("Mở trang Extensions",
                 "Không tìm thấy Chrome/Edge trên máy.\nHãy mở trình duyệt rồi gõ vào thanh địa chỉ:\nchrome://extensions  (hoặc edge://extensions)")

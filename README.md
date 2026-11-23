@@ -101,6 +101,25 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.3.3 (so với 2.3.2)
+
+- **Sửa lỗi clipboard khi cài extension:** hộp thoại Cài Extension copy
+  đường dẫn thư mục extension vào clipboard, nhưng nút "Mở trang
+  Extensions" lại ghi đè clipboard bằng chuỗi `edge://extensions` (hoặc
+  `chrome://extensions`) nên lúc bấm Load unpacked, dán ra được chuỗi URL
+  đó thay vì đường dẫn thư mục. Nay nút mở trang không động vào clipboard
+  nữa, đường dẫn thư mục extension vẫn nằm trong clipboard như hộp thoại
+  đã nói.
+- **Thêm bộ cài đặt (Inno Setup):** file exe trong file zip báo thiếu DLL
+  vì nó chỉ chạy được khi thư mục `_internal` nằm cạnh nó — bấm đúp file
+  exe ngay trong cửa sổ zip, hoặc chỉ kéo mỗi file exe ra ngoài, đều làm
+  mất `_internal`. Bộ cài đặt `YouTubeDownloader-Setup-2.3.3.exe` (tải về
+  ở mục Releases) tự giải nén cả thư mục app vào
+  `%LOCALAPPDATA%\YouTubeDownloader`, tạo shortcut Desktop, tạo mục gỡ
+  cài đặt — chỉ cần tải 1 file, chạy là xong, không cần giải nén tay.
+  File zip vẫn giữ lại cho tính năng tự cập nhật trong app, file exe 1
+  file vẫn giữ lại làm cầu nối cho bản 2.2.x.
+
 ## Thay đổi trong 2.3.2 (so với 2.3.1)
 
 - **Sửa triệt để lỗi DLL khi bấm cập nhật lần 2:** nghĩ kỹ lại thì bước
