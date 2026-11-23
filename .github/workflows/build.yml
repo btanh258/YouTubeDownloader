@@ -2,9 +2,10 @@
 #
 # Vi PyInstaller chi build duoc cho dung he dieu hanh no dang chay, nen
 # khong the build exe Windows tren may Linux - workflow nay lam viec do:
-# moi lan push tag vX.Y.Z (vd v2.3.0), hoac bam Run workflow o tab Actions,
+# moi lan push tag vX.Y.Z (vd v2.3.1), hoac bam Run workflow o tab Actions,
 # GitHub se build tren windows-latest roi gan file zip chua thu muc app
-# vao release cua tag do. Tu 2.3.0 app dong goi onedir (khong phai onefile):
+# va file exe 1 file (cau noi cho ban 2.2.x) vao release cua tag do.
+# Tu 2.3.0 app dong goi onedir (khong phai onefile):
 # exe + DLL nam trong thu muc YouTubeDownloader, khong con tu giai nen
 # ra %TEMP% nen het loi "Failed to load Python DLL" sau khi cap nhat.
 name: Build exe
@@ -16,9 +17,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag cua release can gan zip (vd v2.3.0)'
+        description: 'Tag cua release can gan zip + exe (vd v2.3.1)'
         required: true
-        default: 'v2.3.0'
+        default: 'v2.3.1'
 
 permissions:
   contents: write
@@ -48,6 +49,14 @@ jobs:
           Get-Item dist\YouTubeDownloader\YouTubeDownloader.exe | Select-Object Length, FullName
           dist\YouTubeDownloader\YouTubeDownloader.exe --version
 
+      - name: Build exe 1 file (cau noi cho ban cu)
+        run: python -m PyInstaller --noconfirm --clean --distpath dist-onefile YouTubeDownloader-onefile.spec
+
+      - name: Kiem tra exe 1 file
+        run: |
+          Get-Item dist-onefile\YouTubeDownloader.exe | Select-Object Length, FullName
+          dist-onefile\YouTubeDownloader.exe --version
+
       - name: Dong goi zip
         shell: pwsh
         run: |
@@ -55,9 +64,10 @@ jobs:
           Compress-Archive -Path 'dist\YouTubeDownloader','README.md' -DestinationPath "YouTubeDownloader-$tag.zip" -Force
           Get-Item "YouTubeDownloader-$tag.zip" | Select-Object Length, FullName
 
-      - name: Gan zip vao release
+      - name: Gan zip + exe vao release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           files: |
             YouTubeDownloader-*.zip
+            dist-onefile/YouTubeDownloader.exe
