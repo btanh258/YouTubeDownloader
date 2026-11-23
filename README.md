@@ -101,6 +101,18 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.4.0 (so với 2.3.3) — BẢN FINAL (dự kiến)
+
+- Hộp thoại Cài Extension nay dùng icon của dự án (trước đây là icon
+  mặc định của Windows).
+- Thêm link "ℹ️ Giới thiệu" ở góc dưới cửa sổ chính: bấm vào mở hộp
+  thoại giới thiệu (tên, version, mô tả ngắn) với link dẫn tới trang
+  GitHub của dự án (bấm vào link để mở bằng trình duyệt).
+- Gọn lại release: chỉ còn 1 bản exe duy nhất là bộ cài đặt Inno Setup
+  (`YouTubeDownloader-Setup-2.4.0.exe`) + file zip cho tính năng tự cập
+  nhật trong app. Bỏ bản exe 1 file (cầu nối cho bản 2.2.x, không còn
+  cần nữa vì bản 2.2.x đã có cầu nối 2.3.1/2.3.2/2.3.3 để lên onedir).
+
 ## Thay đổi trong 2.3.3 (so với 2.3.2)
 
 - **Sửa lỗi clipboard khi cài extension:** hộp thoại Cài Extension copy

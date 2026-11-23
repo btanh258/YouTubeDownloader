@@ -48,7 +48,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.3.3"
+VERSION = "2.4.0"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -969,10 +969,16 @@ class YouTubeDownloaderApp:
         self.status_label = tk.Label(status_frame, text="Sẵn sàng.", font=("Segoe UI", 9), bg=self.bg_color, fg="#666666")
         self.status_label.pack(side=tk.LEFT)
 
-        # Link go cai dat o goc duoi (nho, khong lam roi giao dien chinh)
-        self.uninstall_label = tk.Label(root, text="🗑 Gỡ cài đặt", font=("Segoe UI", 8, "underline"),
+        # Link Gioi thieu + Go cai dat o goc duoi (nho, khong lam roi giao dien chinh)
+        bottom_frame = tk.Frame(root, bg=self.bg_color)
+        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=35, pady=(0, 8))
+        self.about_label = tk.Label(bottom_frame, text="ℹ️ Giới thiệu", font=("Segoe UI", 8, "underline"),
+                                    bg=self.bg_color, fg="#888888", cursor="hand2")
+        self.about_label.pack(side=tk.LEFT)
+        self.about_label.bind("<Button-1>", lambda e: self.show_about())
+        self.uninstall_label = tk.Label(bottom_frame, text="🗑 Gỡ cài đặt", font=("Segoe UI", 8, "underline"),
                                         bg=self.bg_color, fg="#888888", cursor="hand2")
-        self.uninstall_label.pack(side=tk.BOTTOM, anchor="e", padx=35, pady=(0, 8))
+        self.uninstall_label.pack(side=tk.RIGHT)
         self.uninstall_label.bind("<Button-1>", lambda e: self.uninstall_app())
 
         # Auto fetch nếu có link từ Chrome
@@ -1490,6 +1496,31 @@ class YouTubeDownloaderApp:
         except Exception:
             pass
 
+    def show_about(self):
+        # Hop thoai Gioi thieu: ten + version + mo ta ngan + link GitHub
+        top = tk.Toplevel(self.root)
+        top.title("Giới thiệu")
+        top.geometry("460x260")
+        top.resizable(False, False)
+        top.configure(bg=self.bg_color)
+        try:
+            top.iconbitmap(resource_path("icon_Youtube.ico"))
+        except Exception:
+            pass
+        tk.Label(top, text=f"YouTube Downloader {VERSION}",
+                 font=("Segoe UI", 13, "bold"), bg=self.bg_color, fg="#1A1A1A").pack(pady=(20, 5))
+        tk.Label(top, text="Tải video YouTube bằng 1 cú bấm\ntừ nút TẢI VIDEO trên YouTube.",
+                 font=("Segoe UI", 10), bg=self.bg_color, fg="#1A1A1A", justify=tk.CENTER).pack(pady=5)
+        link = tk.Label(top, text=f"https://github.com/{GITHUB_REPO}",
+                        font=("Segoe UI", 10, "underline"), bg=self.bg_color, fg="#005FB8", cursor="hand2")
+        link.pack(pady=5)
+        link.bind("<Button-1>", lambda e: webbrowser.open(f"https://github.com/{GITHUB_REPO}"))
+        tk.Label(top, text="Bấm vào link trên để mở trang GitHub của dự án.",
+                 font=("Segoe UI", 9), bg=self.bg_color, fg="#666666").pack(pady=2)
+        ModernButton(top, text="Đóng", bg="#6C757D", hover_bg="#5A6268",
+                     command=top.destroy, width=10).pack(pady=15, ipady=3)
+        top.focus_set()
+
     def install_extension_guide(self):
         ext_dir = installed_extension_dir()
         copy_bundled_extension()
@@ -1503,6 +1534,10 @@ class YouTubeDownloaderApp:
         top.geometry("520x300")
         top.resizable(False, False)
         top.configure(bg=self.bg_color)
+        try:
+            top.iconbitmap(resource_path("icon_Youtube.ico"))
+        except Exception:
+            pass
         tk.Label(top, text="CÀI EXTENSION - CHỈ CÒN 1 BƯỚC TAY",
                  font=("Segoe UI", 12, "bold"), bg=self.bg_color, fg="#1A1A1A").pack(pady=(15, 5))
         tk.Label(top, text="Chrome không cho app tự cài extension lén, nên app đã copy sẵn\nextension vào thư mục dưới đây. Bạn chỉ cần làm 3 bước sau:",
