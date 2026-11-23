@@ -1,0 +1,47 @@
+# Build file exe Windows cho YouTube Downloader, chay tren may Windows cua GitHub.
+name: Build exe
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag cua release can gan exe (vd v2.2.0)'
+        required: true
+        default: 'v2.2.0'
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Cai Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Cai thu vien
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install yt-dlp pyinstaller
+      - name: Build exe
+        run: python -m PyInstaller --noconfirm --clean YouTubeDownloader.spec
+      - name: Kiem tra exe
+        run: |
+          Get-Item dist\YouTubeDownloader.exe | Select-Object Length, FullName
+          dist\YouTubeDownloader.exe --version
+      - name: Dong goi zip
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $tag = $env:GITHUB_REF_NAME } else { $tag = '${{ inputs.tag }}' }
+          Compress-Archive -Path 'dist\YouTubeDownloader.exe','README.md' -DestinationPath "YouTubeDownloader-$tag.zip" -Force
+          Get-Item "YouTubeDownloader-$tag.zip" | Select-Object Length, FullName
+      - name: Gan exe + zip vao release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          files: |
+            dist/YouTubeDownloader.exe
+            YouTubeDownloader-*.zip
