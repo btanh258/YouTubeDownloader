@@ -101,6 +101,13 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.2.6 (so với 2.2.5)
+
+- **Mở file/thư mục thì đóng luôn phần mềm:** hộp thoại "ĐÃ TẢI XONG!" trước
+  đây bấm "Mở File" hoặc "Mở Thư mục" xong cửa sổ app vẫn ở lại, phải bấm
+  thêm "Đóng phần mềm". Nay bấm "Mở File" / "Mở Thư mục" xong app tự đóng
+  luôn. Muốn tải tiếp thì bấm "Tải tiếp video" như cũ.
+
 ## Thay đổi trong 2.2.5 (so với 2.2.4)
 
 - **Sửa lỗi DLL chỉ xảy ra 1 lần ngay sau khi cập nhật:** nguyên nhân là

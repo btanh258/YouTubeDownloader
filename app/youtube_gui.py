@@ -48,7 +48,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.2.5"
+VERSION = "2.2.6"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -1252,6 +1252,8 @@ class YouTubeDownloaderApp:
                 if self.downloaded_file and os.path.exists(self.downloaded_file): os.startfile(self.downloaded_file)
                 else: os.startfile(self.save_dir.get())
             except: pass
+            # Mo file xong thi dong luon cua so phan mem
+            self.root.destroy()
 
         def open_folder():
             try:
@@ -1260,6 +1262,8 @@ class YouTubeDownloaderApp:
                     subprocess.Popen(f'explorer /select,"{os.path.normpath(self.downloaded_file)}"')
                 else: os.startfile(self.save_dir.get())
             except: pass
+            # Mo thu muc xong thi dong luon cua so phan mem
+            self.root.destroy()
         
         btn_frame1 = tk.Frame(top, bg=self.bg_color)
         btn_frame1.pack(pady=5)

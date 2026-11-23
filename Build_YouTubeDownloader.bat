@@ -2,7 +2,7 @@
 chcp 65001 >nul
 setlocal
 echo ==========================================
-echo      BUILD YOUTUBE DOWNLOADER 2.2.5 (EXE)
+echo      BUILD YOUTUBE DOWNLOADER 2.2.6 (EXE)
 echo ==========================================
 echo.
 python --version >nul 2>&1
@@ -24,6 +24,6 @@ dist\YouTubeDownloader.exe --version
 powershell -NoProfile -Command "Compress-Archive -Path 'dist\YouTubeDownloader.exe','README.md' -DestinationPath 'YouTubeDownloader-2.2.zip' -Force"
 echo [OK] File zip: YouTubeDownloader-2.2.zip
 echo.
-echo Upload ca 2 file (exe + zip) len release GitHub v2.2.5
+echo Upload ca 2 file (exe + zip) len release GitHub v2.2.6
 echo de tinh nang tu cap nhat trong app tim thay file exe.
 pause
