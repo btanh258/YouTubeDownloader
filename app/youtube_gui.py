@@ -22,6 +22,7 @@ import tempfile
 import shutil
 import subprocess
 import time
+import re
 
 
 def parse_launch_url(arg):
@@ -46,7 +47,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -109,7 +110,9 @@ def maybe_install_and_relaunch():
             "Cai dat YouTube Downloader", 0x24)
     except Exception:
         return False
-    if ans != 6:  # IDYES = 6
+    if ans != 6:  # IDYES = 6: chay portable, van dang ky protocol toi exe nay
+        # (khong dang ky thi bam TAI VIDEO tren YouTube se khong mo duoc app)
+        register_protocol(current)
         return False
     try:
         os.makedirs(install_dir(), exist_ok=True)
@@ -208,6 +211,59 @@ def create_desktop_shortcut(exe_path):
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                        timeout=20)
         return os.path.exists(link)
+    except Exception:
+        return False
+
+
+def log_line(msg):
+    """Ghi 1 dong log vao data_dir()/YouTubeDownloader.log (best effort)."""
+    try:
+        with open(os.path.join(data_dir(), "YouTubeDownloader.log"), "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " " + str(msg) + "\n")
+    except Exception:
+        pass
+
+
+def _find_browser_exe():
+    """Tim chrome.exe / msedge.exe, tra ve (exe_path, extensions_url) hoac (None, None).
+    webbrowser.open('chrome://extensions') KHONG dung duoc: Windows khong co app
+    nao dang ky scheme 'chrome', nen no hien loi 'Get an app to open this link'."""
+    cands = []
+    if _HAS_WINREG:
+        for root, sub in ((winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+                          (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+                          (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe"),
+                          (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe")):
+            try:
+                with winreg.OpenKey(root, sub) as k:
+                    cands.append((winreg.QueryValueEx(k, "")[0], "chrome://extensions" if "chrome" in sub else "edge://extensions"))
+            except Exception:
+                pass
+    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    local = os.environ.get("LOCALAPPDATA", "")
+    cands += [
+        (os.path.join(pf, "Google", "Chrome", "Application", "chrome.exe"), "chrome://extensions"),
+        (os.path.join(pf86, "Google", "Chrome", "Application", "chrome.exe"), "chrome://extensions"),
+        (os.path.join(local, "Google", "Chrome", "Application", "chrome.exe"), "chrome://extensions"),
+        (os.path.join(pf, "Microsoft", "Edge", "Application", "msedge.exe"), "edge://extensions"),
+        (os.path.join(pf86, "Microsoft", "Edge", "Application", "msedge.exe"), "edge://extensions"),
+    ]
+    for exe, url in cands:
+        if exe and os.path.isfile(exe):
+            return exe, url
+    return None, None
+
+
+def open_extensions_page():
+    """Mo trang Extensions bang cach chay thang chrome.exe/msedge.exe voi URL lam doi so.
+    Tra ve True neu mo duoc, False neu khong tim thay trinh duyet."""
+    exe, url = _find_browser_exe()
+    if not exe:
+        return False
+    try:
+        subprocess.Popen([exe, url], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return True
     except Exception:
         return False
 
@@ -393,6 +449,19 @@ def ffmpeg_version(exe_path):
     except Exception:
         pass
     return ""
+
+
+def ffmpeg_latest_version(timeout=8):
+    """Ban FFmpeg moi nhat tren Gyan.dev, vd '9.1', hoac '' neu khong xac dinh duoc.
+    URL zip luon redirect toi file ffmpeg-<ver>-essentials_build.zip, nen chi can
+    doc URL cuoi cung sau redirect, khong can tai gi ca."""
+    try:
+        req = urllib.request.Request(FFMPEG_ZIP_URL, headers={"User-Agent": "YouTubeDownloader/" + VERSION}, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            m = re.search(r"ffmpeg-(\d+(?:\.\d+)+)-essentials", resp.geturl())
+            return m.group(1) if m else ""
+    except Exception:
+        return ""
 
 
 def ffmpeg_is_usable(exe_path):
@@ -707,6 +776,8 @@ class YouTubeDownloaderApp:
         self.root.after(500, self.ffmpeg_startup_check)
         # Extension trong exe moi hon ban da copy thi copy de + nhac reload tren Chrome
         self.root.after(1000, self.sync_extension_on_startup)
+        # Tu kiem tra / sua protocol ytdl:// (bam TAI VIDEO khong mo app neu thieu buoc nay)
+        self.root.after(1500, self.check_protocol_status)
 
     # --- FFMPEG: tu tai khi mo app / bam nut 🎬 / truoc khi tai video ---
     def ffmpeg_startup_check(self):
@@ -725,10 +796,35 @@ class YouTubeDownloaderApp:
         threading.Thread(target=self.run_ffmpeg_download, args=(force,), daemon=True).start()
 
     def ffmpeg_update_thread(self):
-        # Bam nut 🎬: tai lai ban FFmpeg moi nhat, ke ca khi da co san
-        if messagebox.askyesno("Cập nhật FFmpeg",
-                "Tải lại bản FFmpeg mới nhất từ Gyan.dev?\nFile zip khoảng 119 MB, chỉ nên bấm khi FFmpeg cũ lỗi hoặc đã lâu chưa cập nhật."):
-            self.ffmpeg_download_thread(force=True)
+        # Bam nut 🎬: chi tai khi co ban FFmpeg moi hon ban dang co
+        if self.ffmpeg_busy:
+            return
+        self.status_label.config(text="Đang kiểm tra bản FFmpeg mới nhất...", fg="#D83B01")
+        threading.Thread(target=self.run_ffmpeg_update_check, daemon=True).start()
+
+    def run_ffmpeg_update_check(self):
+        cur = ffmpeg_version(os.path.join(self.app_dir, "ffmpeg.exe"))
+        latest = ffmpeg_latest_version()
+        if not latest:
+            # Khong xac dinh duoc ban moi (mat mang / Gyan doi link): hoi nguoi dung
+            def _ask():
+                if messagebox.askyesno("Cập nhật FFmpeg",
+                        "Không kiểm tra được bản FFmpeg mới nhất (mạng hoặc Gyan.dev không trả lời).\n\nVẫn tải lại FFmpeg (khoảng 119 MB) ngay bây giờ?"):
+                    self.ffmpeg_download_thread(force=True)
+                else:
+                    self.status_label.config(text="Đã hủy cập nhật FFmpeg.", fg="#666666")
+            self.root.after(0, _ask)
+            return
+        if cur and not is_newer(latest, cur):
+            self.root.after(0, self.status_label.config, {"text": f"FFmpeg đã là bản mới nhất ({cur}), không cần cập nhật.", "fg": "#107C10"})
+            return
+        def _go():
+            msg = f"Có bản FFmpeg {latest} mới hơn bản đang có ({cur or 'chưa có'}).\nTải về ngay? File zip khoảng 119 MB."
+            if messagebox.askyesno("Cập nhật FFmpeg", msg):
+                self.ffmpeg_download_thread(force=True)
+            else:
+                self.status_label.config(text="Đã hủy cập nhật FFmpeg.", fg="#666666")
+        self.root.after(0, _go)
 
     def _ffmpeg_progress(self, done, total, stage):
         if total > 0:
@@ -757,6 +853,7 @@ class YouTubeDownloaderApp:
             with open(self.config_file, "w", encoding="utf-8") as f:
                 json.dump(cfg, f)
         except Exception as e:
+            log_line(f"ffmpeg download failed: {e}")
             self.root.after(0, self.status_label.config, {"text": f"Không tải được FFmpeg: {e}. Vẫn tải được video chất lượng thấp, MP3 thì cần FFmpeg.", "fg": "#C42B1C"})
         finally:
             self.ffmpeg_busy = False
@@ -1053,6 +1150,30 @@ class YouTubeDownloaderApp:
         top.grab_set()
 
     # --- EXTENSION: copy + huong dan cai (Chrome khong cho app tu cai len) ---
+    def open_extensions_page_ui(self):
+        # webbrowser.open("chrome://extensions") bi loi vi Windows khong co app
+        # nao xu ly scheme "chrome" - phai chay thang chrome.exe/msedge.exe
+        if not open_extensions_page():
+            messagebox.showinfo("Mở trang Extensions",
+                "Không tìm thấy Chrome/Edge trên máy.\nHãy mở trình duyệt rồi gõ vào thanh địa chỉ:\nchrome://extensions  (hoặc edge://extensions)")
+
+    def check_protocol_status(self):
+        # Tu sua protocol moi lan mo app: neu registry khong tro toi exe nay thi
+        # bam TAI VIDEO tren YouTube se khong mo duoc app (khong co gi xay ra)
+        if not is_frozen():
+            return
+        try:
+            exe = os.path.abspath(sys.executable)
+            target = protocol_target()
+            if exe.lower() not in target.lower():
+                ok = register_protocol(exe)
+                if not ok:
+                    self.status_label.config(
+                        text="Chưa đăng ký được protocol ytdl:// - bấm TẢI VIDEO trên YouTube sẽ không mở app. Hãy chạy app bằng quyền admin 1 lần.",
+                        fg="#C42B1C")
+        except Exception:
+            pass
+
     def sync_extension_on_startup(self):
         try:
             bundled_ver = extension_manifest_version(bundled_extension_dir())
@@ -1089,7 +1210,7 @@ class YouTubeDownloaderApp:
         btns = tk.Frame(top, bg=self.bg_color)
         btns.pack(pady=10)
         ModernButton(btns, text="Mở trang Extensions", bg="#005FB8", hover_bg="#004C93",
-                     command=lambda: webbrowser.open("chrome://extensions"), width=20).pack(side=tk.LEFT, padx=5, ipady=3)
+                     command=self.open_extensions_page_ui, width=20).pack(side=tk.LEFT, padx=5, ipady=3)
         ModernButton(btns, text="Đóng", bg="#6C757D", hover_bg="#5A6268",
                      command=top.destroy, width=10).pack(side=tk.LEFT, padx=5, ipady=3)
         top.focus_set()
@@ -1175,15 +1296,14 @@ if __name__ == "__main__":
     # Exe lan dau chay o cho khac: hoi cai dat, cai xong thi mo lai ban da cai
     if maybe_install_and_relaunch():
         sys.exit(0)
-    # Exe da cai: tu sua lai protocol neu registry tro sai cho (best effort)
+    # Exe: luon dang ky protocol toi exe hien tai (ca khi chay portable o Downloads)
     if is_frozen():
         try:
-            _inst = os.path.join(install_dir(), "YouTubeDownloader.exe")
-            if os.path.normcase(os.path.abspath(sys.executable)) == os.path.normcase(_inst):
-                register_protocol(_inst)
+            register_protocol(os.path.abspath(sys.executable))
         except Exception:
             pass
     init_url = parse_launch_url(sys.argv[1]) if len(sys.argv) > 1 else ""
+    log_line(f"start version={VERSION} frozen={is_frozen()} arg={init_url!r}")
     root = tk.Tk()
     app = YouTubeDownloaderApp(root, init_url)
     root.mainloop()

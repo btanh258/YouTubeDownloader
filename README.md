@@ -101,6 +101,25 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.2.1 (so với 2.2)
+
+- **Sửa lỗi mở trang Extensions:** trước đây nút 🧩 dùng `webbrowser.open("chrome://extensions")`
+  nên Windows báo "Get an app to open this 'chrome' link" (Windows không có app nào
+  đăng ký scheme `chrome`). Nay app chạy thẳng `chrome.exe` / `msedge.exe` với URL
+  làm đối số, không tìm thấy trình duyệt thì báo rõ cách gõ tay.
+- **FFmpeg chỉ cập nhật khi có bản mới hơn:** nút 🎬 giờ đọc bản mới nhất từ link
+  redirect của Gyan.dev (vd 9.1) rồi so với bản đang có; đã là bản mới nhất thì
+  báo luôn, không tải lại file 119 MB nữa. Không kiểm tra được bản mới thì hỏi
+  người dùng có muốn tải lại không.
+- **Bấm TẢI VIDEO không có gì xảy ra:** nguyên nhân là protocol `ytdl://` chưa
+  đăng ký tới exe (vd chạy portable rồi chọn No, hoặc registry trỏ sai chỗ).
+  Nay app tự đăng ký / tự sửa protocol mỗi lần mở (cả chế độ portable), và
+  hiện cảnh báo trên thanh trạng thái nếu đăng ký thất bại. Nút trên YouTube
+  giờ dùng thẻ `<a>` click, copy link vào clipboard làm dự phòng, và hiện
+  toast báo đã gửi link sang app.
+- **Thêm file log:** `%LOCALAPPDATA%\YouTubeDownloader\YouTubeDownloader.log`
+  ghi lần mở app, link nhận được và lỗi tải FFmpeg, để gửi lại khi cần chẩn đoán.
+
 ## Thay đổi trong 2.2 (so với 2.1)
 
 - **1 file exe:** PyInstaller onefile, kèm extension + icon bên trong.
