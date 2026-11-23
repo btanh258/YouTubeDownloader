@@ -101,6 +101,24 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.3.2 (so với 2.3.1)
+
+- **Sửa triệt để lỗi DLL khi bấm cập nhật lần 2:** nghĩ kỹ lại thì bước
+  "chạy thử exe mới để kiểm tra" (thêm từ 2.2.4) mới chính là thủ phạm:
+  nó chạy file exe vừa tải về ngay lúc Defender đang quét file đó, nên
+  Defender hiện hộp thoại lỗi DLL. File tải về đã được kiểm tra SHA-256
+  + kích thước (đủ byte, đúng file gốc trên Releases, đã được Actions
+  chạy thử `--version` khi build) nên không cần chạy thử nữa. Từ 2.3.2,
+  cập nhật và cài đặt không chạy thử file mới, chỉ kiểm tra SHA/size rồi
+  đổi thẳng — hộp thoại lỗi DLL không còn đường nào để hiện ra nữa.
+- **Extension không bị dư 2 nơi nữa:** trước đây dữ liệu app (config,
+  FFmpeg, extension, log) lưu theo chỗ exe đang chạy, nên chạy bản
+  portable ở Downloads thì extension tạo ở đó, chạy bản đã cài thì
+  extension tạo trong AppData — thành 2 bản. Nay nếu máy đã có bản cài
+  trong AppData thì mọi bản (kể cả bản portable) đều dùng chung thư mục
+  AppData, chỉ khi máy chưa cài gì mới lưu bên cạnh exe. App cũng tự
+  xóa thư mục extension thừa bên cạnh file exe (nếu có) khi mở lên.
+
 ## Thay đổi trong 2.3.1 (so với 2.3.0)
 
 - **Sửa lỗi "Release mới không có file YouTubeDownloader.exe để tải" khi

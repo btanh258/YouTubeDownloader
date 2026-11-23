@@ -2,7 +2,7 @@
 chcp 65001 >nul
 setlocal
 echo ==========================================
-echo      BUILD YOUTUBE DOWNLOADER 2.3.1 (THU MUC APP + EXE CAU NOI)
+echo      BUILD YOUTUBE DOWNLOADER 2.3.2 (THU MUC APP + EXE CAU NOI)
 echo ==========================================
 echo.
 python --version >nul 2>&1
@@ -21,8 +21,8 @@ if %errorlevel% neq 0 (
 echo.
 echo [OK] Thu muc app: dist\YouTubeDownloader
 dist\YouTubeDownloader\YouTubeDownloader.exe --version
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\YouTubeDownloader','README.md' -DestinationPath 'YouTubeDownloader-v2.3.1.zip' -Force"
-echo [OK] File zip: YouTubeDownloader-v2.3.1.zip
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\YouTubeDownloader','README.md' -DestinationPath 'YouTubeDownloader-v2.3.2.zip' -Force"
+echo [OK] File zip: YouTubeDownloader-v2.3.2.zip
 echo.
 echo Build them file exe 1 file lam cau noi cho ban 2.2.x cap nhat len:
 python -m PyInstaller --noconfirm --clean --distpath dist-onefile YouTubeDownloader-onefile.spec
@@ -34,6 +34,6 @@ if %errorlevel% neq 0 (
 dist-onefile\YouTubeDownloader.exe --version
 echo [OK] File exe cau noi: dist-onefile\YouTubeDownloader.exe
 echo.
-echo Upload ca 2 file (zip + exe) len release GitHub v2.3.1
+echo Upload ca 2 file (zip + exe) len release GitHub v2.3.2
 echo de ban cu tim thay file exe, ban moi tim thay file zip.
 pause
