@@ -2,9 +2,11 @@
 #
 # Vi PyInstaller chi build duoc cho dung he dieu hanh no dang chay, nen
 # khong the build exe Windows tren may Linux - workflow nay lam viec do:
-# moi lan push tag vX.Y.Z (vd v2.3.1), hoac bam Run workflow o tab Actions,
-# GitHub se build tren windows-latest roi gan file zip chua thu muc app
-# va file exe 1 file (cau noi cho ban 2.2.x) vao release cua tag do.
+# moi lan push tag vX.Y.Z (vd v2.3.3), hoac bam Run workflow o tab Actions,
+# GitHub se build tren windows-latest roi gan 3 file vao release cua tag do:
+# file zip chua thu muc app (cho tinh nang tu cap nhat trong app),
+# file exe 1 file (cau noi cho ban 2.2.x cap nhat len),
+# bo cai dat Inno Setup (cho nguoi moi tai ve, chay la xong).
 # Tu 2.3.0 app dong goi onedir (khong phai onefile):
 # exe + DLL nam trong thu muc YouTubeDownloader, khong con tu giai nen
 # ra %TEMP% nen het loi "Failed to load Python DLL" sau khi cap nhat.
@@ -17,9 +19,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag cua release can gan zip + exe (vd v2.3.2'
+        description: 'Tag cua release can gan file (vd v2.3.3)'
         required: true
-        default: 'v2.3.2'
+        default: 'v2.3.3'
 
 permissions:
   contents: write
@@ -64,10 +66,31 @@ jobs:
           Compress-Archive -Path 'dist\YouTubeDownloader','README.md' -DestinationPath "YouTubeDownloader-$tag.zip" -Force
           Get-Item "YouTubeDownloader-$tag.zip" | Select-Object Length, FullName
 
-      - name: Gan zip + exe vao release
+      - name: Cai Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build bo cai dat (Inno Setup)
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $tag = $env:GITHUB_REF_NAME } else { $tag = '${{ inputs.tag }}' }
+          $ver = $tag -replace '^v',''
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" YouTubeDownloader.iss
+          Get-Item "Output\YouTubeDownloader-Setup-$ver.exe" | Select-Object Length, FullName
+
+      - name: Kiem tra bo cai dat
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $tag = $env:GITHUB_REF_NAME } else { $tag = '${{ inputs.tag }}' }
+          $ver = $tag -replace '^v',''
+          Start-Process -FilePath "Output\YouTubeDownloader-Setup-$ver.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          Get-Item "$env:LOCALAPPDATA\YouTubeDownloader\YouTubeDownloader.exe" | Select-Object Length, FullName
+          & "$env:LOCALAPPDATA\YouTubeDownloader\YouTubeDownloader.exe" --version
+
+      - name: Gan zip + exe + bo cai dat vao release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           files: |
             YouTubeDownloader-*.zip
             dist-onefile/YouTubeDownloader.exe
+            Output/YouTubeDownloader-Setup-*.exe
