@@ -48,7 +48,7 @@ def parse_launch_url(arg):
         url = urllib.parse.unquote(url)
     return url.strip()
 
-VERSION = "2.2.2"
+VERSION = "2.2.3"
 APP_NAME = "YouTubeDownloader"
 GITHUB_REPO = "btanh258/YouTubeDownloader"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -90,29 +90,67 @@ def data_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _exe_version(exe_path):
+    """Chay 'exe --version', tra ve chuoi version hoac '' neu khong chay duoc."""
+    try:
+        out = subprocess.run([exe_path, "--version"], capture_output=True,
+                             text=True, timeout=10,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if out.returncode != 0:
+            return ""
+        m = re.search(r"\d+(?:\.\d+)+", out.stdout or "")
+        return m.group(0) if m else ""
+    except Exception:
+        return ""
+
+
 def maybe_install_and_relaunch():
     """Chi dung khi chay exe dong goi: neu exe chua o thu muc cai dat thi hoi
     nguoi dung co cai dat khong. Cai thi copy exe + extension, dang ky protocol,
     tao shortcut Desktop, mo lai ban da cai roi thoat ban nay. Tra ve True neu
-    da mo lai ban cai dat (caller nen thoat ngay)."""
+    da mo lai ban cai dat (caller nen thoat ngay).
+    Chi hoi 1 lan cho moi ban exe: chon No thi ghi file danh dau portable ben
+    canh exe, lan sau khong hoi nua. Neu da co ban cai san bang hoac moi hon
+    thi mo thang ban do, khong hoi."""
     if not is_frozen():
         return False
     installed = os.path.join(install_dir(), "YouTubeDownloader.exe")
     current = os.path.abspath(sys.executable)
     if os.path.normcase(current) == os.path.normcase(installed):
         return False
+    exe_dir = os.path.dirname(current)
+    marker = os.path.join(exe_dir, "YouTubeDownloader.portable")
+    if os.path.isfile(marker):
+        return False
+    if os.path.isfile(installed):
+        ver_inst = _exe_version(installed)
+        v_inst = parse_version(ver_inst) if ver_inst else None
+        v_cur = parse_version(VERSION)
+        if v_inst and v_cur and v_inst >= v_cur:
+            try:
+                subprocess.Popen([installed] + sys.argv[1:],
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                return True
+            except Exception:
+                pass
     try:
         import ctypes as _ct
         ans = _ct.windll.user32.MessageBoxW(
             None,
             "Cai dat YouTube Downloader vao thu muc:\n" + install_dir() +
             "\n\nSau khi cai, app se tu dang ky protocol ytdl://, copy extension " +
-            "va tai FFmpeg khi can.\n\nChon No de chay portable tu cho hien tai (khong cai dat).",
+            "va tai FFmpeg khi can.\n\nChon No de chay portable tu cho hien tai (se khong hoi lai cho ban nay).",
             "Cai dat YouTube Downloader", 0x24)
     except Exception:
         return False
     if ans != 6:  # IDYES = 6: chay portable, van dang ky protocol toi exe nay
         # (khong dang ky thi bam TAI VIDEO tren YouTube se khong mo duoc app)
+        # Ghi file danh dau de lan sau khong hoi lai nua
+        try:
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write("Portable mode - khong hoi cai dat lai. Xoa file nay de app hoi lai.\n")
+        except Exception:
+            pass
         register_protocol(current)
         return False
     try:
@@ -257,13 +295,22 @@ def _find_browser_exe():
 
 
 def open_extensions_page():
-    """Mo trang Extensions bang cach chay thang chrome.exe/msedge.exe voi URL lam doi so.
-    Tra ve True neu mo duoc, False neu khong tim thay trinh duyet."""
+    """Mo trang Extensions. Tra ve True neu mo duoc, False neu khong tim thay trinh duyet.
+    Edge: mo qua scheme 'microsoft-edge:' - cach Windows mo Edge voi URL.
+    Chay thang msedge.exe voi 'edge://extensions' lam doi so doi khi chi mo Edge
+    ma khong mo trang (Edge bo qua doi so khi da co cua so dang chay).
+    Chrome: chay thang chrome.exe voi 'chrome://extensions' lam doi so."""
     exe, url = _find_browser_exe()
     if not exe:
         return False
+    if "msedge" in os.path.basename(exe).lower():
+        try:
+            os.startfile("microsoft-edge:" + url)
+            return True
+        except Exception:
+            pass
     try:
-        subprocess.Popen([exe, url], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        subprocess.Popen([exe, url])
         return True
     except Exception:
         return False
@@ -787,6 +834,12 @@ class YouTubeDownloaderApp:
         self.status_label = tk.Label(status_frame, text="Sẵn sàng.", font=("Segoe UI", 9), bg=self.bg_color, fg="#666666")
         self.status_label.pack(side=tk.LEFT)
 
+        # Link go cai dat o goc duoi (nho, khong lam roi giao dien chinh)
+        self.uninstall_label = tk.Label(root, text="🗑 Gỡ cài đặt", font=("Segoe UI", 8, "underline"),
+                                        bg=self.bg_color, fg="#888888", cursor="hand2")
+        self.uninstall_label.pack(side=tk.BOTTOM, anchor="e", padx=35, pady=(0, 8))
+        self.uninstall_label.bind("<Button-1>", lambda e: self.uninstall_app())
+
         # Auto fetch nếu có link từ Chrome
         if initial_url:
             self.fetch_info_thread()
@@ -1178,8 +1231,15 @@ class YouTubeDownloaderApp:
 
     # --- EXTENSION: copy + huong dan cai (Chrome khong cho app tu cai len) ---
     def open_extensions_page_ui(self):
-        # webbrowser.open("chrome://extensions") bi loi vi Windows khong co app
-        # nao xu ly scheme "chrome" - phai chay thang chrome.exe/msedge.exe
+        # Copy san URL trang Extensions vao clipboard: neu trinh duyet mo ra ma
+        # chua thay trang thi dan URL nay vao thanh dia chi la xong
+        _exe, _url = _find_browser_exe()
+        if _url:
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(_url)
+            except Exception:
+                pass
         if not open_extensions_page():
             messagebox.showinfo("Mở trang Extensions",
                 "Không tìm thấy Chrome/Edge trên máy.\nHãy mở trình duyệt rồi gõ vào thanh địa chỉ:\nchrome://extensions  (hoặc edge://extensions)")
@@ -1200,6 +1260,51 @@ class YouTubeDownloaderApp:
                         fg="#C42B1C")
         except Exception:
             pass
+
+    def uninstall_app(self):
+        """Go sach app khoi may: xoa thu muc cai dat, protocol ytdl://, shortcut.
+        App phai thoat truoc thi file .bat moi xoa duoc file exe dang chay."""
+        if not is_frozen():
+            # Chay .py: khong co thu muc cai dat, chi go dang ky protocol
+            if messagebox.askyesno("Gỡ cài đặt",
+                    "Bạn đang chạy bản .py (không phải exe đã cài).\n\nApp sẽ gỡ đăng ký protocol ytdl://, còn thư mục source thì bạn xóa tay.\n\nTiếp tục?"):
+                try:
+                    if _HAS_WINREG:
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\ytdl\shell\open\command")
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\ytdl\shell\open")
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\ytdl\shell")
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\ytdl")
+                except Exception:
+                    pass
+                messagebox.showinfo("Gỡ cài đặt", "Đã gỡ đăng ký protocol ytdl://.")
+            return
+        if not messagebox.askyesno("Gỡ cài đặt",
+                "Gỡ sạch YouTube Downloader khỏi máy?\n\nSẽ xóa:\n- Thư mục cài đặt (exe, FFmpeg, extension, config, log)\n- Đăng ký protocol ytdl://\n- Shortcut trên Desktop\n\nVideo đã tải sẽ KHÔNG bị xóa.\n\nLưu ý: extension trên Chrome sẽ báo lỗi vì thư mục đã bị xóa,\nbạn bấm Remove trên chrome://extensions để gỡ nốt."):
+            return
+        inst = install_dir()
+        bat = os.path.join(tempfile.gettempdir(), "ytdl_uninstall.bat")
+        script = ("@echo off\r\nsetlocal\r\n"
+                  f'set "DIR={inst}"\r\n'
+                  f'set "EXE={os.path.join(inst, "YouTubeDownloader.exe")}"\r\n'
+                  "set /a tries=0\r\n:retry\r\nset /a tries+=1\r\n"
+                  'del "%EXE%" >nul 2>&1\r\n'
+                  'if exist "%EXE%" (\r\n'
+                  "if %tries% GEQ 60 goto cleanup\r\n"
+                  "ping -n 2 127.0.0.1 >nul\r\n goto retry\r\n)\r\n"
+                  ":cleanup\r\n"
+                  'reg delete "HKCU\\Software\\Classes\\ytdl" /f >nul 2>&1\r\n'
+                  'del "%USERPROFILE%\\Desktop\\YouTube Downloader.lnk" >nul 2>&1\r\n'
+                  'rmdir /s /q "%DIR%" >nul 2>&1\r\n'
+                  '(goto) 2>nul & del "%~f0"\r\n')
+        try:
+            with open(bat, "w", encoding="utf-8", newline="") as f:
+                f.write(script)
+            subprocess.Popen(["cmd", "/c", bat],
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không tạo được trình gỡ cài đặt: {e}")
+            return
+        self.root.destroy()
 
     def sync_extension_on_startup(self):
         try:

@@ -101,6 +101,25 @@ extension/
   manifest.json            Manifest MV3 tối giản, không quyền gì cả
 ```
 
+## Thay đổi trong 2.2.3 (so với 2.2.2)
+
+- **Không hỏi cài đặt mỗi lần mở nữa:** trước đây cứ chạy exe ở chỗ khác
+  (vd Downloads) là hỏi lại. Nay chỉ hỏi 1 lần cho mỗi bản exe: chọn No
+  thì ghi file đánh dấu `YouTubeDownloader.portable` bên cạnh exe, lần sau
+  không hỏi nữa (xóa file đó để app hỏi lại). Nếu đã có bản cài sẵn bằng
+  hoặc mới hơn thì mở thẳng bản đó, không hỏi.
+- **Nút Mở trang Extensions trên Edge:** trước đây chạy thẳng `msedge.exe`
+  với `edge://extensions` làm đối số, Edge chỉ mở lên mà không mở trang.
+  Nay Edge mở qua scheme `microsoft-edge:` (cách Windows mở Edge với URL),
+  Chrome vẫn chạy thẳng `chrome.exe`. Nút này cũng copy sẵn URL trang
+  Extensions vào clipboard để dán tay nếu cần.
+- **Gỡ cài đặt sạch sẽ:** bấm link "🗑 Gỡ cài đặt" ở góc dưới cửa sổ chính
+  (hoặc chạy `Uninstall_YouTubeDownloader.bat`). App sẽ xóa thư mục cài
+  đặt (exe, FFmpeg, extension, config, log), gỡ đăng ký protocol `ytdl://`
+  và shortcut Desktop. Video đã tải không bị xóa. Extension trên Chrome
+  sẽ báo lỗi vì thư mục đã bị xóa, bấm Remove trên `chrome://extensions`
+  để gỡ nốt.
+
 ## Thay đổi trong 2.2.2 (so với 2.2.1)
 
 - **Sửa lỗi "Failed to load Python DLL" sau khi cập nhật:** nguyên nhân là
